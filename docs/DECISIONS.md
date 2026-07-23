@@ -367,3 +367,45 @@ of once a quarter deserves; this is the same tradeoff D-010 already made for sta
 
 **Consequences.** The two copies can drift, and nothing except the dedicated test would
 notice — which is exactly D-010's bargain, made twice more.
+
+## D-020 — Reporting views live in a migration, one persona-mapped view per window-function technique (2026-07-23)
+
+**Decision.** Seven views under `reporting.*`, defined in migration `005_reporting_views.sql`.
+Each maps to a persona named in the target posting and demonstrates a different
+window-function technique rather than repeating one pattern seven times.
+
+**Alternatives considered.** (a) Materialized views or summary tables — rejected because
+`reporting` is deliberately views-only (enforced by test); a report that could disagree
+with the facts underneath it because a refresh was missed is exactly what this schema
+split exists to prevent. (b) Placing view definitions in the transform layer — rejected
+for the same reason dimension/transform DDL is separated in general: a view's SQL text
+is structure, checksummed and versioned like any other DDL, and has no data-manipulation
+step of its own to belong in a transform.
+
+**Consequences.** None of the seven views expose RESTRICTED-tier data at individual
+grain; that boundary is asserted by a test enumerating restricted column names from the
+generator's own classification. Compensation and performance-rating reporting at
+individual grain is left for Phase 4, where row-level security and column masking would
+make it defensible — building it now, ahead of that machinery, would be the exact thing
+the governance phase exists to prevent.
+
+## D-021 — Counting distinct entities, not averaging per-row indicators (2026-07-23)
+
+**Decision.** Rate-style metrics computed from `dim_employee` (headcount, attrition)
+must count `DISTINCT employee_id` at each point in time, in its own CTE, rather than
+aggregating an indicator expression directly over `dim_employee`'s rows.
+
+**Alternatives considered.** Averaging a per-row 0/1/2 "covers this boundary date"
+indicator directly — this is what shipped first, in `rpt_attrition_by_department`, and
+it reported 4883% attrition for Engineering. `dim_employee` holds one row per SCD2 span,
+not one row per employee, so an aggregate over its rows is implicitly weighted by how
+many spans each employee happens to have — an employee with six spans and an employee
+with one contribute unequally to what should be a simple headcount, and most spans cover
+neither boundary date at all, diluting the result toward zero while the numerator stayed
+correct.
+
+**Consequences.** Any future metric derived from `dim_employee` must count distinct
+employees explicitly rather than aggregating the table's own row count, which is a span
+count, not a person count. `test_attrition_rate_is_a_plausible_percentage` guards the
+specific regression; `test_headcount_matches_a_direct_point_in_time_count` cross-checks
+`rpt_headcount_trend` against the same distinct-count logic written out independently.
