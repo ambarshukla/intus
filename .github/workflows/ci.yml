@@ -1,0 +1,66 @@
+# CI: every pull request (and main) must pass format check, lint, and tests.
+#
+# One job per workspace component so each appears as its own required status
+# check; `gen` is the only one today, with the legacy warehouse and lakehouse
+# phases adding theirs later. Deliberately written out rather than expressed
+# as a matrix — a matrix renames the status checks, which silently detaches
+# any branch-protection rule that requires a check by name.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to the same PR cancels the previous, now-obsolete run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gen
+    steps:
+      # Major version pinned; bumped when runners deprecate the Node runtime
+      # that older action versions target.
+      - uses: actions/checkout@v5
+
+      # Version pinned to match local dev, and so setup-uv never has to ask
+      # the GitHub API for "latest" — an outage there is an avoidable way to
+      # fail a build that has nothing to do with our code.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.29"
+
+      # --locked: fail if uv.lock is out of sync with pyproject.toml, so CI
+      # always tests exactly the pinned dependency set rather than quietly
+      # resolving a newer one.
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Tests
+        run: uv run pytest
+
+      # End-to-end smoke: the unit tests exercise the generators directly, so
+      # nothing else would catch a broken console-script entry point or an
+      # argument-parsing regression. Small scale keeps it to a few seconds.
+      - name: Generate (smoke)
+        run: uv run intus-gen generate --scale small --seed 1 --out /tmp/intus-smoke
+
+      # The catalog is generated from the schemas, so a committed copy can go
+      # stale the moment a column is added. Regenerating and diffing makes
+      # that a build failure rather than a documentation bug nobody notices.
+      - name: Catalog is up to date
+        run: |
+          uv run intus-gen catalog --out ../docs/data-catalog.md
+          git diff --exit-code -- ../docs/data-catalog.md

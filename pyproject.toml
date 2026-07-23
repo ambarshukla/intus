@@ -1,0 +1,11 @@
+# uv workspace root — a "virtual" root: it declares no package of its own,
+# only the membership. One uv.lock lives here covering every member, so all
+# packages always resolve identical dependency versions and a version skew
+# between them becomes unrepresentable rather than merely unlikely.
+#
+# `uv run` from inside any member walks up to this file, syncs the shared
+# environment, and runs with the member's cwd — which is what lets the
+# Makefile's `cd gen && uv run pytest` work without any per-package venv.
+
+[tool.uv.workspace]
+members = ["gen"]

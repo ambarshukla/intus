@@ -1,0 +1,18 @@
+# Shared ruff config for every workspace package — one source of truth, so
+# packages cannot drift apart on style. Lives at the root rather than in a
+# per-package pyproject because `src` must name every package directory:
+# that is how ruff knows our own modules are first-party and sorts them with
+# our code instead of with third-party imports.
+
+line-length = 100
+src = [
+    "gen/src",
+    "gen/tests",
+]
+
+[lint]
+# Beyond the defaults: import order (I), modernisation (UP), likely bugs (B),
+# needless complexity (SIM), and ruff's own rules (RUF). Strict from the first
+# commit — retrofitting lint onto an existing codebase is far more painful
+# than living with it from the start.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
