@@ -1,0 +1,43 @@
+# Python project definition for the synthetic data generators (PEP 621).
+# uv reads this to build the virtualenv; uv.lock at the workspace root pins
+# exact versions, so CI and every dev machine resolve identically.
+
+[project]
+name = "intus-gen"
+version = "0.1.0"
+description = "Deterministic synthetic generators for Halcyon's internal data estate"
+requires-python = ">=3.12"
+
+# Deliberately empty. Everything here is stdlib: dataclasses for records,
+# `csv` for output, `hashlib`/`random` for seeding. A generator whose whole
+# contract is "same seed, same bytes" is better served by the standard
+# library's stability than by a dependency that could change its float
+# formatting or CSV quoting in a minor release. pyarrow/pandas arrive in the
+# lakehouse phase, where they do work that stdlib genuinely cannot.
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    # Property-based testing: the determinism and referential-integrity
+    # invariants here are universally quantified statements ("for ANY seed,
+    # two runs agree"), which is exactly what hypothesis expresses well and
+    # example-based tests only sample.
+    "hypothesis>=6.100",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+intus-gen = "intus_gen.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/intus_gen"]
+
+# Ruff config is shared across the workspace: see <repo>/ruff.toml.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -33,8 +33,34 @@ to do so while enforcing strict, auditable limits on who can see what.
 
 ## Status
 
-Just started — scaffold only. See `docs/BUILD_LOG.md` for the running narrative and
-`docs/DECISIONS.md` for design decisions as they're made.
+**Phase 1 complete: the synthetic data generators.** `gen/` holds `intus_gen`, which
+produces twelve datasets across the six domains above — about 1.8M rows at full scale —
+deterministically from a seed, with sensitivity tiers declared beside each schema and
+nineteen deliberate data-quality defects recorded in a ground-truth manifest.
+
+See `docs/BUILD_LOG.md` for the running narrative, `docs/DECISIONS.md` for design
+decisions with the alternatives considered, and `docs/data-catalog.md` (generated) for
+the full column-level classification.
+
+Next: the legacy Postgres warehouse — star schemas, SCD2 dimensions, plain-SQL ETL.
+
+## Running it
+
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.12.
+
+```bash
+uv sync                  # create the environment from uv.lock
+make test                # run the suite
+make lint                # ruff format check + lint
+make generate            # full dataset into data/raw (~90s)
+SCALE=small make generate # a fast subset for iterating
+make catalog             # regenerate docs/data-catalog.md from the schemas
+```
+
+Generated data is gitignored: a deterministic generator plus a committed manifest is a
+better record than several hundred megabytes of committed CSV. The same seed produces
+byte-identical output on any machine, which is what makes the manifest's per-file
+SHA-256 worth recording.
 
 ## Relationship to `parvum`
 
