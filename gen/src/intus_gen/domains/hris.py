@@ -339,7 +339,13 @@ def _overlapping_span(rows: list, rng: Random, world: HalcyonWorld) -> list[Inje
             Injection(
                 defect="HR_OVERLAPPING_SPAN",
                 dataset=EMPLOYEE_HISTORY.name,
-                target_key=f"{original.employee_id}|{original.valid_from}",
+                # The *shifted* value, because this is the only defect whose
+                # corruption lands on a primary-key column. Naming the original
+                # key would point at a row that no longer exists in the
+                # delivered data, leaving the one defect that most needs
+                # detection impossible to join back to — which is exactly what
+                # happened until the warehouse tried to score against it.
+                target_key=f"{original.employee_id}|{shifted}",
                 detail=f"valid_from {original.valid_from} -> {shifted}, overlapping the prior span",
             )
         )

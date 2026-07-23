@@ -2,6 +2,69 @@
 
 Newest first. One entry per merged change; what was built and what was learned.
 
+## 2026-07-23 — Phase 2b: conformed dimensions, SCD2, and a data-quality scorecard
+
+The star schema's dimension half, and the piece that turns Phase 1's ground truth into
+a measurement.
+
+**Transforms are not migrations.** A second runner, and a separate directory. Migrations
+change *structure*, run once, and are checksummed so they can never change afterwards;
+transforms change *data*, run on every load, and must be idempotent. Conflating them
+gives you either migrations nobody dares re-run or transforms that silently apply twice.
+The whole transform set runs in one transaction — a half-built star schema, dimensions
+updated and facts not, is a state no report should be able to observe.
+
+**MERGE rather than truncate-and-rebuild**, and the reason is not elegance. For a full
+extract, rebuilding is simpler and correct — except that facts will reference
+`employee_key`, so reissuing surrogate keys on every load would orphan every fact
+pointing at them. There is a test asserting keys survive a rerun, because that is the
+entire justification. (Postgres 16's `MERGE` has no `WHEN NOT MATCHED BY SOURCE` — that
+arrived in 17 — so removals are a separate `DELETE` that must run first.)
+
+**`dim_employee` is type 2, `dim_account` is type 1**, and the contrast is deliberate.
+The choice is made by what the source can evidence, not by which is more sophisticated:
+the HR extract is effective-dated, the CRM extract carries only current state. Modelling
+accounts as type 2 would manufacture versions the source cannot substantiate — the
+dimension would claim to know when an account changed segment, and it does not.
+
+The SCD2 invariant is enforced by the database, not trusted from the transform: a GiST
+exclusion constraint on `(employee_id, daterange(valid_from, valid_to))` makes two
+versions covering the same day unrepresentable. It should never fire, which is exactly
+why it is worth having — a point-in-time join returning two rows silently double-counts
+rather than failing. `is_current` means *latest version*, which is not the same as
+"still employed"; a leaver's final version is current and closed, so it gets a partial
+unique index rather than a check against `valid_to`.
+
+**Three dispositions, not one.** `warehouse.dq_exception` records whether a row was
+`rejected`, `repaired`, or `flagged`, and choosing between them is the actual data-
+quality design work. An overlapping span is rejected — the table cannot hold it. An
+employee whose manager is missing from the extract is *repaired*: the pointer is nulled
+and the row kept, because dropping a person to fix a pointer would lose them from
+headcount. A missing termination reason is merely flagged: the warehouse can see the
+gap but has no business inventing what belongs there. A layer that only knows how to
+reject silently loses data.
+
+Rejecting a span leaves a **gap** in that employee's history, and that is intended. The
+alternative — stretching a neighbouring span to close it — would invent effective dates
+the source does not support, so a point-in-time query would return a confidently wrong
+answer instead of no answer. A gap is visible; a fabricated span is not.
+
+**The scorecard.** `intus-wh dq-score` joins detections against the generator's manifest
+and reports recall *and* false positives per rule. Both, because recall alone is
+meaningless: a rule that rejects every row scores 100%. All four implemented rules score
+100% recall with zero false positives; the other fourteen defect types report "not
+implemented" rather than zero, so a partially built warehouse states its coverage
+honestly. CI runs it with `--strict`, so a regression in a rule fails the build instead
+of quietly lowering a number nobody reads.
+
+**A bug in Phase 1, found only by trying to use it.** `HR_OVERLAPPING_SPAN` recorded the
+*pre-corruption* `valid_from` as its target key — but that defect works by changing
+`valid_from`, so the manifest named a row that no longer existed in the delivered data.
+The one defect most worth detecting was the one impossible to score. Every Phase 1 test
+had checked that keys were non-empty; none had checked that they *resolve*. Fixed, with
+a general test asserting every manifest key matches a real row — verified to fail
+against the old code.
+
 ## 2026-07-23 — Phase 2a: the legacy warehouse — Postgres, migrations, staging load
 
 The "before" system in the modernization story. Postgres 16 in Docker (port 5433, not

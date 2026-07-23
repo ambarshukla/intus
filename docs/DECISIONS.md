@@ -197,3 +197,74 @@ able to read the schema as SQL.
 exactly, which is what lets `COPY` work without a column list. That correspondence is
 asserted rather than commented, because "mirrors the generator exactly" is the kind of
 claim that is true when written and false six months later.
+
+## D-011 — Transforms are separate from migrations (2026-07-23)
+
+**Decision.** Two runners and two directories. `warehouse/sql/` holds versioned,
+checksummed, run-once DDL. `warehouse/transform/` holds idempotent DML re-run on every
+load by `intus-wh build`, executed as one transaction and recorded in
+`warehouse.transform_run`.
+
+**Alternatives considered.** (a) Populating dimensions from within migrations — rejected
+because a migration is applied once and never re-run, so the warehouse could only ever
+be built from the extract that happened to be in staging the day it was applied.
+(b) One runner with a flag distinguishing the two — rejected because the properties are
+genuinely different (immutable vs. repeatable, checksummed vs. not), and a shared runner
+would have to disable half its own guarantees depending on the flag.
+
+**Consequences.** Transforms must be idempotent, which is asserted rather than assumed.
+The run id is published to the SQL through a session setting (`SET LOCAL intus.run_id`)
+rather than string interpolation, keeping the transform files parameter-free and
+ensuring no code path splices a value into SQL text.
+
+## D-012 — MERGE, not truncate-and-rebuild, so surrogate keys survive (2026-07-23)
+
+**Decision.** Every dimension is reconciled with `MERGE`, plus a separate `DELETE` for
+rows the source no longer carries.
+
+**Alternatives considered.** Truncate-and-rebuild — simpler, obviously correct for a
+full extract, and rejected for one concrete reason: facts reference `employee_key`, and
+rebuilding reissues every surrogate key, orphaning every fact that pointed at them. This
+is the whole justification, so there is a test asserting keys are stable across a rerun.
+Postgres 16's `MERGE` lacks `WHEN NOT MATCHED BY SOURCE` (added in 17), hence the
+separate `DELETE`, which must run *before* the merge or a row being removed can collide
+with a row being inserted under the no-overlap constraint.
+
+**Consequences.** `is_current` is cleared in a separate statement before being
+recomputed: the partial unique index is checked as each row is written, so flipping the
+flag from an old version to a new one inside a single `MERGE` can transiently violate it
+depending on row order.
+
+## D-013 — Type 2 for employees, type 1 for accounts (2026-07-23)
+
+**Decision.** `dim_employee` keeps full history with effective-dated versions; a GiST
+exclusion constraint makes overlapping versions unrepresentable. `dim_account` holds
+current state only.
+
+**Alternatives considered.** Making both type 2 for consistency — rejected because the
+CRM extract carries no history, so type 2 would manufacture versions the source cannot
+substantiate: the dimension would claim to know *when* an account changed segment, and
+it does not. The dimension type is a statement about what the source can evidence.
+
+**Consequences.** Rejecting a corrupt span leaves a gap in an employee's history rather
+than closing it by stretching a neighbour, which would invent effective dates and make a
+point-in-time query return a confidently wrong answer instead of no answer.
+
+## D-014 — Three dispositions for data-quality exceptions, and a scored manifest (2026-07-23)
+
+**Decision.** `warehouse.dq_exception` records `rejected`, `repaired`, or `flagged`
+alongside a severity, and `intus-wh dq-score` compares detections against Phase 1's
+defect manifest, reporting recall *and* false positives per rule.
+
+**Alternatives considered.** (a) A single "rejects" table — rejected because not every
+problem justifies discarding the row; an employee whose manager is absent from the
+extract is still an employee, and dropping them to fix a pointer loses a person from
+headcount. (b) Reporting recall alone — rejected because a rule that rejects every row
+scores perfect recall; false positives are what make the number mean anything. (c)
+Reporting unimplemented rules as 0% — rejected as misleading: a partially built
+warehouse should state its coverage, not look broken.
+
+**Consequences.** The generator's `target_key` format and the transform's must agree
+exactly; nothing else in either codebase would notice if they drifted, so a test checks
+them against each other. CI runs the scorecard with `--strict`, making a regression in a
+rule a build failure rather than a quietly lowered number.

@@ -78,3 +78,29 @@ Terms used in this project, expanded on first use in the docs and kept here.
   new migration rather than reversing an old one.
 - **Load audit** — a durable record of what was loaded, from which file, with which
   content hash, so the provenance of the data currently in the warehouse is answerable.
+- **Conformed dimension** — one agreed definition of a business entity shared by every
+  fact that references it, so an HR headcount report and a finance spend report slice by
+  the same "department" rather than by two lookups that disagree.
+- **Surrogate key** — a warehouse-generated identifier (`employee_key`) standing in for
+  the source's natural key. Facts reference it, which is why it must stay stable across
+  loads.
+- **SCD type 1 / type 2** — type 1 overwrites an attribute when it changes, keeping only
+  current state; type 2 keeps a dated version per change. The right choice depends on
+  what the source can evidence, not on which is more sophisticated.
+- **MERGE** — a single SQL statement that inserts, updates or deletes depending on
+  whether a source row matches the target. Postgres gained it in 15; `WHEN NOT MATCHED
+  BY SOURCE` arrived in 17.
+- **Exclusion constraint** — a Postgres constraint rejecting rows whose values *overlap*
+  an existing row under a chosen operator. Used here with `daterange` to make
+  overlapping SCD2 versions impossible to store.
+- **Partial index** — an index over a subset of rows (`WHERE is_current`). A partial
+  *unique* index enforces "at most one current version per employee" without forbidding
+  the historical ones.
+- **Disposition (data quality)** — what was done about a detected problem: the row was
+  `rejected`, `repaired` (kept with a value corrected), or `flagged` (kept unchanged and
+  recorded). A layer that only rejects silently loses data.
+- **Recall / false positive** — of the defects actually present, the share detected; and
+  detections that no real defect explains. Recall alone is not a quality measure, since
+  rejecting everything scores 100%.
+- **Idempotent** — running it twice leaves the same result as running it once. The
+  defining property of a transform, as against a migration.

@@ -117,9 +117,18 @@ jobs:
       # End-to-end against the service container: generate an extract, apply
       # migrations, load it. Exercises the console scripts and the real COPY
       # path, which the unit tests reach only through library calls.
-      - name: Migrate and load (smoke)
+      - name: Migrate, load and build (smoke)
         run: |
           uv run --directory ../gen intus-gen generate --scale small --seed 7 --out /tmp/extract
           uv run intus-wh migrate
           uv run intus-wh load --from /tmp/extract
+          uv run intus-wh build
           uv run intus-wh status
+
+      # Scores the transform's detections against the generator's seeded
+      # defects. --strict fails the build if any implemented rule missed a
+      # seeded defect or raised an exception no defect explains, so a
+      # regression in a data-quality rule breaks CI rather than quietly
+      # lowering a number nobody reads.
+      - name: Data-quality scorecard
+        run: uv run intus-wh dq-score --from /tmp/extract --strict

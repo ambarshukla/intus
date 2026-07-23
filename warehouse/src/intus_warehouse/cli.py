@@ -7,8 +7,10 @@ import sys
 from pathlib import Path
 
 from intus_warehouse import __version__, db
+from intus_warehouse.dq import format_scorecard, score
 from intus_warehouse.load import load_directory
 from intus_warehouse.migrate import discover, pending, run
+from intus_warehouse.transform import run as run_transforms
 
 DEFAULT_DATA_DIR = Path("data/raw")
 
@@ -35,6 +37,25 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_DATA_DIR,
         help=f"extract directory (default: {DEFAULT_DATA_DIR})",
+    )
+
+    subparsers.add_parser("build", help="run the transforms that build the warehouse")
+
+    dq = subparsers.add_parser(
+        "dq-score", help="score detected exceptions against the generator manifest"
+    )
+    dq.add_argument(
+        "--from",
+        dest="source",
+        type=Path,
+        default=DEFAULT_DATA_DIR,
+        help=f"extract directory holding manifest.json (default: {DEFAULT_DATA_DIR})",
+    )
+    dq.add_argument("--run-id", type=int, help="transform run to score (default: latest)")
+    dq.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail unless every implemented rule has perfect recall and no false positives",
     )
 
     subparsers.add_parser("status", help="show connection and migration state")
@@ -72,6 +93,28 @@ def run_load(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_build(_args: argparse.Namespace) -> int:
+    with db.connect() as connection:
+        result = run_transforms(connection)
+
+    for step in result.steps:
+        print(f"  ran {step}")
+    print(f"  run {result.run_id}: {result.exceptions} data-quality exception(s)")
+    return 0
+
+
+def run_dq_score(args: argparse.Namespace) -> int:
+    with db.connect() as connection:
+        scorecard = score(connection, args.source, args.run_id)
+
+    print(format_scorecard(scorecard))
+    if args.strict and not scorecard.all_implemented_rules_perfect:
+        print()
+        print("strict: an implemented rule missed a seeded defect or raised a false positive")
+        return 1
+    return 0
+
+
 def run_status(_args: argparse.Namespace) -> int:
     print(f"dsn: {db.dsn()}")
     if not db.is_available():
@@ -87,7 +130,13 @@ def run_status(_args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    handlers = {"migrate": run_migrate, "load": run_load, "status": run_status}
+    handlers = {
+        "migrate": run_migrate,
+        "load": run_load,
+        "build": run_build,
+        "dq-score": run_dq_score,
+        "status": run_status,
+    }
     return handlers[args.command](args)
 
 
