@@ -1,0 +1,46 @@
+# The legacy warehouse: migration runner, CSV loader, and (later) the
+# transform driver. Deliberately thin Python around SQL that does the work —
+# the SQL is the artefact this phase exists to demonstrate.
+
+[project]
+name = "intus-warehouse"
+version = "0.1.0"
+description = "Legacy Postgres star-schema warehouse for the Halcyon dataset"
+requires-python = ">=3.12"
+dependencies = [
+    # psycopg 3, binary wheel so no local libpq/build toolchain is needed.
+    # Its COPY support is the reason this is a dependency at all: bulk-loading
+    # through INSERT would be an order of magnitude slower on a million-row
+    # fact table, and COPY is what a real warehouse load uses anyway.
+    "psycopg[binary]>=3.2",
+    # The generators' Dataset registry, used to assert that the hand-written
+    # staging DDL has not drifted from the schemas that produce the files.
+    "intus-gen",
+]
+
+[tool.uv.sources]
+intus-gen = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+intus-wh = "intus_warehouse.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/intus_warehouse"]
+
+# Ruff config is shared across the workspace: see <repo>/ruff.toml.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Tests need a live Postgres; the marker lets `-m "not db"` skip them when one
+# is not running, and makes the skip reason explicit rather than a mystery.
+markers = ["db: requires a live Postgres instance"]

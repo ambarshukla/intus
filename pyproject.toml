@@ -8,4 +8,4 @@
 # Makefile's `cd gen && uv run pytest` work without any per-package venv.
 
 [tool.uv.workspace]
-members = ["gen"]
+members = ["gen", "warehouse"]

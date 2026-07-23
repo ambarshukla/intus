@@ -38,23 +38,40 @@ produces twelve datasets across the six domains above — about 1.8M rows at ful
 deterministically from a seed, with sensitivity tiers declared beside each schema and
 nineteen deliberate data-quality defects recorded in a ground-truth manifest.
 
+**Phase 2 in progress: the legacy warehouse.** `warehouse/` holds `intus_warehouse` —
+Postgres 16 in Docker, a forward-only SQL migration runner, and a `COPY`-based loader
+that lands the extracts into an untyped `staging` schema (1.8M rows in ~3 seconds),
+verifying each file against the generator's manifest hash before it loads. The star
+schema and reporting views follow.
+
 See `docs/BUILD_LOG.md` for the running narrative, `docs/DECISIONS.md` for design
 decisions with the alternatives considered, and `docs/data-catalog.md` (generated) for
 the full column-level classification.
 
-Next: the legacy Postgres warehouse — star schemas, SCD2 dimensions, plain-SQL ETL.
-
 ## Running it
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.12.
+Requires [uv](https://docs.astral.sh/uv/), Python 3.12, and Docker for the warehouse.
 
 ```bash
-uv sync                  # create the environment from uv.lock
-make test                # run the suite
-make lint                # ruff format check + lint
-make generate            # full dataset into data/raw (~90s)
+uv sync                   # create the environment from uv.lock
+make test                 # run every suite
+make lint                 # ruff format check + lint
+make generate             # full dataset into data/raw (~90s)
 SCALE=small make generate # a fast subset for iterating
-make catalog             # regenerate docs/data-catalog.md from the schemas
+make catalog              # regenerate docs/data-catalog.md from the schemas
+```
+
+The legacy warehouse (Postgres on port 5433, so it can coexist with another local
+instance on the default port):
+
+```bash
+make warehouse   # up + migrate + load, from scratch
+make up          # start Postgres and wait for it
+make migrate     # apply pending SQL migrations
+make load        # truncate and reload staging from data/raw
+make psql        # a psql shell in the container
+make db-status   # connection and migration state
+make down        # stop, keeping data;  make db-clean  also drops the volume
 ```
 
 Generated data is gitignored: a deterministic generator plus a committed manifest is a

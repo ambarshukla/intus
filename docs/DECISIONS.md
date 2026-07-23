@@ -137,3 +137,63 @@ instead of re-reading gigabytes of CSV.
 **Consequences.** Regenerability is verifiable rather than asserted. Generated data is
 gitignored, because a deterministic generator plus a committed manifest is a better
 record than 400 MB of committed CSV.
+
+## D-008 — A hand-rolled migration runner, not Flyway or Alembic (2026-07-23)
+
+**Decision.** Migrations are `NNN_name.sql` files applied in order by ~100 lines of
+Python, recorded in `public.schema_migration` with a SHA-256 checksum, each in its own
+committed transaction, forward-only.
+
+**Alternatives considered.** (a) Flyway — the obvious choice and a better tool, rejected
+because it needs a JVM (not normally on PATH on this machine) and because it would add a
+configuration vocabulary without changing a line of the SQL that this phase exists to
+demonstrate. (b) Alembic — designed around SQLAlchemy models and autogeneration, which
+is the opposite of what a hand-written star schema wants. (c) Down-migrations — rejected
+as reassuring but rarely correct: the interesting failures involve data, which a schema
+rollback cannot restore. Rolling forward with a new migration is the honest fix.
+
+**Consequences.** Editing an applied migration is an error rather than silent
+divergence. Checksums normalise line endings before hashing, or a CRLF checkout would
+report tampering that never happened. The runner commits after each migration — without
+that, on a non-autocommit connection `connection.transaction()` opens a savepoint rather
+than a transaction, and the whole run becomes atomic instead of each migration, which
+inverts the property transactional DDL exists to give.
+
+## D-009 — Staging is untyped, unconstrained, and truncate-and-reload (2026-07-23)
+
+**Decision.** Every staging column is `text`; no primary keys, foreign keys or checks.
+Each load truncates and reloads, in one transaction, via `COPY`.
+
+**Alternatives considered.** (a) Typed staging columns — rejected because the extracts
+deliberately contain malformed data, so COPY would fail on the first bad row and one
+field would sink a million-row load with an error pointing at a byte offset rather than
+at a business problem. Untyped staging moves rejection to the transform, where a row can
+be rejected *with a reason* and recorded. (b) A primary key on staging — rejected
+because two of the seeded defects are duplicate rows; a key would reject them at the
+door, when the goal is to detect and report them. (c) Incremental/append loading —
+rejected because staging holds the current extract, not history; the warehouse layer is
+where history lives, and wholesale reload makes a rerun idempotent by construction.
+(d) `INSERT` instead of `COPY` — rejected on measurement: 1.8M rows load in 3.2 seconds
+via COPY.
+
+**Consequences.** A load either fully replaces the previous extract or leaves it
+untouched. Provenance is verified rather than trusted: each file's SHA-256 is checked
+against the generator manifest before loading, and recorded with the seed and as-of date
+in `staging.load_audit`, which accumulates across loads even though staging itself does
+not.
+
+## D-010 — Hand-written staging DDL, with drift caught by a test (2026-07-23)
+
+**Decision.** The staging DDL is written by hand and kept in step with the generators by
+a test that compares the live `information_schema` against Phase 1's `Dataset` registry.
+
+**Alternatives considered.** Generating the DDL from the registry — genuinely tempting,
+since it would make drift *impossible* rather than merely detected. Rejected because
+this phase's purpose is to be a credible legacy warehouse and the SQL brush-up vehicle;
+generated DDL would hide the artefact the phase exists to produce. A reviewer should be
+able to read the schema as SQL.
+
+**Consequences.** Column names and order in staging must mirror the generator schemas
+exactly, which is what lets `COPY` work without a column list. That correspondence is
+asserted rather than commented, because "mirrors the generator exactly" is the kind of
+claim that is true when written and false six months later.

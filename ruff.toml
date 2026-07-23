@@ -8,6 +8,8 @@ line-length = 100
 src = [
     "gen/src",
     "gen/tests",
+    "warehouse/src",
+    "warehouse/tests",
 ]
 
 [lint]
