@@ -312,3 +312,34 @@ def test_missing_termination_reason_is_null(injected_by_name):
         if row.termination_date is not None and row.termination_reason is None
     }
     assert targets <= blank
+
+
+def test_every_target_key_resolves_to_a_row(injected):
+    """The manifest must join to the data it describes.
+
+    ``target_key`` is a row's primary key with the components joined by ``|``.
+    That contract is what lets a downstream data-quality layer score its
+    detections against the seeded truth, and it is silently broken by any
+    defect that corrupts a key column: the manifest then names a row that no
+    longer exists.
+
+    HR_OVERLAPPING_SPAN did exactly that — it recorded the pre-corruption
+    ``valid_from`` — and nothing noticed until the warehouse tried to use the
+    manifest, because every other test only checked that keys were non-empty.
+    """
+    tables, injections = injected
+    by_name = {table.name: table for table in tables}
+
+    keys_by_dataset: dict[str, set[str]] = {}
+    for name, table in by_name.items():
+        primary_key = table.dataset.primary_key
+        keys_by_dataset[name] = {
+            "|".join(str(getattr(row, field)) for field in primary_key) for row in table.rows
+        }
+
+    unresolved = [
+        (injection.defect, injection.target_key)
+        for injection in injections
+        if injection.target_key not in keys_by_dataset[injection.dataset]
+    ]
+    assert unresolved == [], f"manifest keys that match no row: {unresolved}"

@@ -19,7 +19,7 @@ PGUSER ?= intus
 PGDB   ?= intus
 
 .PHONY: help sync fmt lint test check generate catalog clean \
-        up down psql db-status db-clean migrate load warehouse
+        up down psql db-status db-clean migrate load build dq-score warehouse
 
 # Two traps here, both of which have bitten on the sibling project:
 #  -h        MAKEFILE_LIST is "Makefile .env" (from -include above), and grep
@@ -79,4 +79,10 @@ migrate: ## apply pending SQL migrations
 load: ## truncate and reload staging from data/raw
 	cd warehouse && uv run intus-wh load --from ../$(OUT)
 
-warehouse: up migrate load ## full local rebuild: start, migrate, load
+build: ## run the transforms that build the star schema from staging
+	cd warehouse && uv run intus-wh build
+
+dq-score: ## score detected exceptions against the generator's defect manifest
+	cd warehouse && uv run intus-wh dq-score --from ../$(OUT)
+
+warehouse: up migrate load build dq-score ## full local rebuild: start, migrate, load, build, score

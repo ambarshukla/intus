@@ -41,8 +41,14 @@ nineteen deliberate data-quality defects recorded in a ground-truth manifest.
 **Phase 2 in progress: the legacy warehouse.** `warehouse/` holds `intus_warehouse` —
 Postgres 16 in Docker, a forward-only SQL migration runner, and a `COPY`-based loader
 that lands the extracts into an untyped `staging` schema (1.8M rows in ~3 seconds),
-verifying each file against the generator's manifest hash before it loads. The star
-schema and reporting views follow.
+verifying each file against the generator's manifest hash before it loads.
+
+The conformed dimensions are built: a type-2 `dim_employee` whose no-overlap invariant
+is enforced by a GiST exclusion constraint, a type-1 `dim_account`, and a generated
+`dim_date`. Data-quality rules classify every problem they find as *rejected*,
+*repaired* or *flagged*, and `intus-wh dq-score` grades those detections against the
+generator's seeded defects — reporting recall **and** false positives, because a rule
+that rejects everything scores perfect recall. Fact tables and reporting views follow.
 
 See `docs/BUILD_LOG.md` for the running narrative, `docs/DECISIONS.md` for design
 decisions with the alternatives considered, and `docs/data-catalog.md` (generated) for
@@ -65,14 +71,19 @@ The legacy warehouse (Postgres on port 5433, so it can coexist with another loca
 instance on the default port):
 
 ```bash
-make warehouse   # up + migrate + load, from scratch
+make warehouse   # up + migrate + load + build + score, from scratch
 make up          # start Postgres and wait for it
 make migrate     # apply pending SQL migrations
 make load        # truncate and reload staging from data/raw
+make build       # run the transforms that build the star schema
+make dq-score    # grade detections against the generator's defect manifest
 make psql        # a psql shell in the container
 make db-status   # connection and migration state
 make down        # stop, keeping data;  make db-clean  also drops the volume
 ```
+
+`make dq-score` prints, per rule, how many defects were seeded, how many were found, how
+many were missed, and how many exceptions no seeded defect explains.
 
 Generated data is gitignored: a deterministic generator plus a committed manifest is a
 better record than several hundred megabytes of committed CSV. The same seed produces
