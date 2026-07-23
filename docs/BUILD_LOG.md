@@ -2,6 +2,96 @@
 
 Newest first. One entry per merged change; what was built and what was learned.
 
+## 2026-07-23 — Phase 2c: the fact tables, and full data-quality coverage
+
+Ten fact tables — compensation, performance reviews, subscriptions, invoices,
+opportunities, daily usage, AI usage, access events, GL actuals, budgets — completing
+the star schema and taking the data-quality scorecard from 4 of 19 defect types to
+**19 of 19**, all at 100% recall with zero false positives, verified at both small and
+full scale (66/66 seeded defects caught in the full 1.8M-row extract).
+
+**Facts truncate-and-reload; dimensions MERGE.** The contrast with Phase 2b is
+deliberate and follows directly from D-012's reasoning: nothing downstream references a
+fact row's own key, so there is no surrogate-key stability to protect, and reload is
+simpler and faster than the DELETE-then-MERGE dance dimensions require.
+
+**A point-in-time lookup function, used by every fact that joins to `dim_employee`.**
+`warehouse.employee_key_as_of(employee_id, date)` returns the SCD2 version in force on a
+date, or NULL if none covers it — the standard fact-load join, written once rather than
+six times. Its NULL case turned out to be exactly the detection mechanism the centrepiece
+security rule needed: `SEC_LOGIN_AFTER_TERMINATION` fires precisely when the function
+returns NULL for an event dated after someone's last version closed.
+
+Strict point-in-time resolution is *wrong* for some facts, though. A budget's
+`approved_date` is set to the prior November for every fiscal period, which is routinely
+before a newer approver's first HR record — a case with nothing wrong with the data, just
+a legitimate reason point-in-time lookup fails. A second function,
+`employee_key_best`, falls back to the nearest known version instead of NULL. It is used
+for every fact's stored `employee_key` column; the strict function stays reserved for
+`dq_exception` detection queries, which need the gap-revealing NULL. The same reasoning
+governs `fact_access_event`'s post-termination-login row: it resolves to the *real*
+employee via `employee_key_best`, not to the sentinel "Unknown Employee" — an audit trail
+whose most important finding anonymises the person it is about has defeated its own
+purpose.
+
+**Unknown members.** Every dimension gets one sentinel row at key `-1`, for a fact whose
+foreign key cannot resolve to anything real. The alternative — a nullable FK — pushes the
+problem onto every report ever written against the fact, where every join becomes a LEFT
+JOIN and every GROUP BY needs its own COALESCE. Two dimension transforms (`dim_employee`,
+`dim_account`) run a DELETE for rows the source no longer carries; both now explicitly
+exclude `key = -1`, learned the hard way — the sentinel isn't in any extract by
+construction, so an unqualified DELETE removed it on the very next rebuild. The
+`is_current`-clearing UPDATE in `dim_employee` had the identical bug in a different
+guise: cleared unconditionally, the sentinel's flag never got set back to `true` (it's
+never a MERGE match), silently breaking its own "at most one current row" guarantee.
+
+**A genuinely nasty concurrency bug, from switching a database's underlying
+population.** Regenerate with a different scale or seed against an already-built
+warehouse, and `dim_employee`'s reconciliation DELETE can try to remove an employee
+version that a *previous* run's not-yet-truncated facts still reference — a live foreign
+key violation, mid-transaction, over a state the transform was always going to correct
+two steps later. The fix is `DEFERRABLE INITIALLY DEFERRED` on every fact-to-dimension
+foreign key: checked at commit, not at each statement, which is what lets "delete the
+parent, rebuild the child" work at all within one transaction. Reproduced deliberately —
+build once, switch the loaded extract to full scale, rebuild — to confirm the fix, since
+the failure mode does not show up when the same population is simply reloaded.
+
+**`dim_date`'s range was too narrow**, discovered by the same reproduction: executives
+are backdated up to seven years before the dataset's own start date
+(`intus_gen.world._build_people`), so a compensation record's `effective_from` can
+legitimately predate anything else in the extract. The original 2018–2030 range missed
+it; widened to 2010–2035 with real margin rather than the exact computed minimum, so a
+future change to the backdating window doesn't silently reopen the gap.
+
+**A real bug in the Phase 1 generator, found only by adding a constraint the generator
+never had to satisfy before.** `warehouse.dim_employee`'s SCD2 exclusion constraint
+rejects any span with `valid_from == valid_to`, and one existed: when a termination date
+landed exactly on a work anniversary, `world.py`'s span-building loop treated the
+anniversary as an ordinary mid-career change *and* as the terminal boundary, producing a
+zero-length trailing span — a role lasting zero days, which is not a data-quality
+scenario worth detecting, just wrong. Fixed by changing the loop's boundary check from
+`>` to `>=`. The regression test swept 20 seeds rather than relying on the shared test
+fixture's one seed, because the bug depends on a coincidence (termination date = hire
+date + 365×n) that most seeds simply do not produce — the fixture's default seed was one
+of them, and a test using only it would have passed against the unfixed code.
+
+**Two statistical detection rules turned out to be wrong on first measurement, both
+caught by scoring against the manifest rather than by reading the SQL.**
+`AI_COST_MISMATCH` was designed to flag cost values statistically distant from a
+per-model average — defeated by the generator's own wide token-count variance, which
+made a correct high-token request indistinguishable from a corrupted one. Replaced with
+exact recomputation from a hard-coded copy of the model rate card, reconciling to within
+a wide tolerance (10%, comfortably below the seeded 3×–12× corruption and comfortably
+above legitimate rounding noise). `SEC_IMPOSSIBLE_TRAVEL` first scored 33% recall and 138
+false positives: requiring *both* paired events to be a successful login missed two of
+three seeded pairs, since the generator only guarantees that of the *fabricated* twin;
+and "different country" was far too loose a signal, since `source_country` is drawn per
+event from a multi-country pool *within* one region, so ordinary same-region variation
+was swamping the real defect. Fixed by requiring only the later event to be a login, and
+by checking region rather than raw country — a second small reference table, duplicated
+into SQL the same way as the AI rate card, both kept honest against the generator by a
+dedicated drift test (the D-010 pattern, now used three times).
+
 ## 2026-07-23 — Phase 2b: conformed dimensions, SCD2, and a data-quality scorecard
 
 The star schema's dimension half, and the piece that turns Phase 1's ground truth into

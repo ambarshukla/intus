@@ -56,6 +56,34 @@ def test_spans_are_contiguous_and_non_overlapping(world):
             assert earlier.valid_from < earlier.valid_to
 
 
+def test_no_span_has_zero_length(as_of):
+    """A termination landing exactly on a work anniversary once produced a
+    valid_from == valid_to final span — impossible to load under the
+    warehouse's SCD2 exclusion constraint, and not physically meaningful
+    either (a role lasting zero days). Checked for every span, not just the
+    non-final ones test_spans_are_contiguous_and_non_overlapping covers,
+    since the bug was specifically in the final span.
+
+    Swept over a range of seeds rather than relying on the shared `world`
+    fixture's one seed: the bug depends on a termination date landing exactly
+    on a hire-date anniversary, which most seeds simply do not produce. The
+    fixture's default seed (4242) is one of them — this test passed against
+    the unfixed generator until seed 2 was tried, which is precisely the
+    coverage gap a single fixed seed leaves. All at SMALL scale, so the sweep
+    stays cheap.
+    """
+    for seed in range(20):
+        world = build_world(seed=seed, scale=Scale.SMALL, end_date=as_of)
+        for person in world.people:
+            for span in person.spans:
+                if span.valid_to is not None:
+                    assert span.valid_from < span.valid_to, (
+                        seed,
+                        person.employee_id,
+                        span.valid_from,
+                    )
+
+
 def test_final_span_matches_termination(world):
     for person in world.people:
         assert person.spans[-1].valid_to == person.termination_date

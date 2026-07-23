@@ -100,8 +100,12 @@ WHEN NOT MATCHED THEN
         source.status, source.churn_date, source.is_active
     );
 
+-- account_key = -1 is the unknown member (004_warehouse_facts.sql) and has no
+-- counterpart in any extract by construction; excluded or this would delete
+-- it on every run.
 DELETE FROM warehouse.dim_account AS target
-WHERE NOT EXISTS (
+WHERE target.account_key <> -1
+  AND NOT EXISTS (
     SELECT 1 FROM tmp_account_final AS source
     WHERE source.account_id = target.account_id
 );

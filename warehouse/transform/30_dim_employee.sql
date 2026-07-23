@@ -185,8 +185,13 @@ CREATE INDEX ON tmp_employee_final (employee_id, valid_from);
 -- WHEN NOT MATCHED BY SOURCE clause (added in 17), so this is a separate
 -- statement — and it must run before the MERGE, or a row being deleted could
 -- still collide with a row being inserted under the no-overlap constraint.
+--
+-- employee_key = -1 (the unknown member, see 004_warehouse_facts.sql) is
+-- excluded: it has no counterpart in any extract by construction, so this
+-- delete would otherwise remove it on every single run.
 DELETE FROM warehouse.dim_employee AS target
-WHERE NOT EXISTS (
+WHERE target.employee_key <> -1
+  AND NOT EXISTS (
     SELECT 1 FROM tmp_employee_final AS source
     WHERE source.employee_id = target.employee_id
       AND source.valid_from  = target.valid_from
@@ -197,7 +202,13 @@ WHERE NOT EXISTS (
 -- flipping the flag from an old row to a new one inside a single MERGE can
 -- transiently violate it depending on row order. Clearing first makes the
 -- outcome independent of that order.
-UPDATE warehouse.dim_employee SET is_current = false WHERE is_current;
+--
+-- employee_key = -1 (the unknown member) is excluded for the same reason as
+-- the DELETE above: it is never a match in tmp_employee_final, so once
+-- cleared here it would never be set back to true by the MERGE below, and
+-- every fact's fallback to "Unknown Employee" would silently point at a
+-- dimension row that had quietly stopped being current.
+UPDATE warehouse.dim_employee SET is_current = false WHERE is_current AND employee_key <> -1;
 
 MERGE INTO warehouse.dim_employee AS target
 USING tmp_employee_final AS source

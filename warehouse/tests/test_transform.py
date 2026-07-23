@@ -25,10 +25,26 @@ def _counts(connection) -> dict[str, int]:
 
 
 def test_discovers_transforms_in_order():
+    """Numeric order, not string order — "100" must sort after "20", not before it."""
     steps = discover()
-    orders = [step.order for step in steps]
+    orders = [int(step.order) for step in steps]
     assert orders == sorted(orders)
     assert [step.name for step in steps][:2] == ["dim_date", "dim_department"]
+
+
+def test_orders_sort_numerically_not_lexically(tmp_path):
+    (tmp_path / "100_last.sql").write_text("SELECT 1", encoding="utf-8")
+    (tmp_path / "20_second.sql").write_text("SELECT 1", encoding="utf-8")
+    (tmp_path / "9_first.sql").write_text("SELECT 1", encoding="utf-8")
+    steps = discover(tmp_path)
+    assert [step.name for step in steps] == ["first", "second", "last"]
+
+
+def test_rejects_duplicate_orders(tmp_path):
+    (tmp_path / "10_one.sql").write_text("SELECT 1", encoding="utf-8")
+    (tmp_path / "10_two.sql").write_text("SELECT 1", encoding="utf-8")
+    with pytest.raises(TransformError, match="duplicate transform order"):
+        discover(tmp_path)
 
 
 def test_rejects_badly_named_transforms(tmp_path):

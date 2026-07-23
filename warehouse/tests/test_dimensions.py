@@ -24,6 +24,12 @@ def _scalar(connection, sql: str, params=None):
         return cursor.fetchone()[0]
 
 
+def _scalar_row(connection, sql: str, params=None):
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        return cursor.fetchone()
+
+
 # --------------------------------------------------------------------------
 # dim_date
 # --------------------------------------------------------------------------
@@ -218,10 +224,39 @@ def test_surviving_manager_pointers_all_resolve(built):
 
 
 def test_every_staging_employee_reaches_the_dimension(built):
-    """Rejections remove versions, never people."""
+    """Rejections remove versions, never people.
+
+    employee_key = -1 excluded throughout this file: it is the sentinel
+    "Unknown Employee" row a fact falls back to when it cannot resolve a real
+    one (see 004_warehouse_facts.sql), not a person the extract produced. It
+    deliberately does not satisfy every rule real, extract-derived rows do —
+    dim_account's has no churn_date consistent with is_active, dim_department's
+    has no cost_center — so assertions about "what the extract loaded" filter
+    it out rather than contorting the sentinel to satisfy every such rule.
+    """
     staged = _scalar(built, "SELECT count(DISTINCT employee_id) FROM staging.hr_employee_history")
-    loaded = _scalar(built, "SELECT count(DISTINCT employee_id) FROM warehouse.dim_employee")
+    loaded = _scalar(
+        built,
+        "SELECT count(DISTINCT employee_id) FROM warehouse.dim_employee WHERE employee_key <> -1",
+    )
     assert loaded == staged
+
+
+def test_the_unknown_employee_member_exists_and_stays_current(built):
+    """A regression guard: this exact row briefly lost is_current after a rebuild.
+
+    The transform clears is_current on every row before recomputing it, ready
+    for the MERGE below to set it back to true for whichever version is now
+    latest. The sentinel is never a MERGE match, so a clear that did not
+    explicitly exclude it left is_current permanently false — silently
+    breaking uq_dim_employee_current's "at most one current row" guarantee
+    for it and leaving every fact's fallback pointing at a non-current row.
+    """
+    row = _scalar_row(
+        built,
+        "SELECT employee_id, is_current FROM warehouse.dim_employee WHERE employee_key = -1",
+    )
+    assert row == ("UNKNOWN", True)
 
 
 # --------------------------------------------------------------------------
@@ -232,7 +267,7 @@ def test_every_staging_employee_reaches_the_dimension(built):
 def test_duplicate_accounts_are_collapsed(built):
     staged = _scalar(built, "SELECT count(*) FROM staging.crm_account")
     distinct = _scalar(built, "SELECT count(DISTINCT account_id) FROM staging.crm_account")
-    loaded = _scalar(built, "SELECT count(*) FROM warehouse.dim_account")
+    loaded = _scalar(built, "SELECT count(*) FROM warehouse.dim_account WHERE account_key <> -1")
 
     assert staged > distinct, "the fixture should contain seeded duplicates"
     assert loaded == distinct
@@ -241,7 +276,8 @@ def test_duplicate_accounts_are_collapsed(built):
 def test_account_activity_is_derived_from_the_churn_date(built):
     inconsistent = _scalar(
         built,
-        "SELECT count(*) FROM warehouse.dim_account WHERE is_active <> (churn_date IS NULL)",
+        "SELECT count(*) FROM warehouse.dim_account "
+        "WHERE account_key <> -1 AND is_active <> (churn_date IS NULL)",
     )
     assert inconsistent == 0
 
@@ -249,9 +285,13 @@ def test_account_activity_is_derived_from_the_churn_date(built):
 def test_departments_carry_their_cost_centre(built):
     """The conformed join: HR supplies the name, finance the cost centre."""
     without = _scalar(
-        built, "SELECT count(*) FROM warehouse.dim_department WHERE cost_center IS NULL"
+        built,
+        "SELECT count(*) FROM warehouse.dim_department "
+        "WHERE department_key <> -1 AND cost_center IS NULL",
     )
-    total = _scalar(built, "SELECT count(*) FROM warehouse.dim_department")
+    total = _scalar(
+        built, "SELECT count(*) FROM warehouse.dim_department WHERE department_key <> -1"
+    )
     assert total > 0
     assert without == 0
 

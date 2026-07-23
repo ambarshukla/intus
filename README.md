@@ -43,12 +43,15 @@ Postgres 16 in Docker, a forward-only SQL migration runner, and a `COPY`-based l
 that lands the extracts into an untyped `staging` schema (1.8M rows in ~3 seconds),
 verifying each file against the generator's manifest hash before it loads.
 
-The conformed dimensions are built: a type-2 `dim_employee` whose no-overlap invariant
-is enforced by a GiST exclusion constraint, a type-1 `dim_account`, and a generated
-`dim_date`. Data-quality rules classify every problem they find as *rejected*,
-*repaired* or *flagged*, and `intus-wh dq-score` grades those detections against the
+The star schema is complete: a type-2 `dim_employee` whose no-overlap invariant is
+enforced by a GiST exclusion constraint, a type-1 `dim_account`, `dim_date`,
+`dim_department`, `dim_product`, and ten fact tables spanning every domain the
+generators produce. Data-quality rules classify every problem they find as *rejected*,
+*repaired* or *flagged*, and `intus-wh dq-score` grades detections against the
 generator's seeded defects — reporting recall **and** false positives, because a rule
-that rejects everything scores perfect recall. Fact tables and reporting views follow.
+that rejects everything scores perfect recall. All **19 of 19** defect types are now
+covered, at 100% recall with zero false positives, verified at both small and full
+scale. Reporting views are next.
 
 See `docs/BUILD_LOG.md` for the running narrative, `docs/DECISIONS.md` for design
 decisions with the alternatives considered, and `docs/data-catalog.md` (generated) for

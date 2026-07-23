@@ -32,5 +32,14 @@ SELECT
     'FY' || extract(year FROM day) || '-M' || to_char(day, 'MM')      AS fiscal_period,
     'FY' || extract(year FROM day) || '-Q' || extract(quarter FROM day) AS fiscal_quarter,
     extract(year FROM day)::smallint                         AS fiscal_year
-FROM generate_series(DATE '2018-01-01', DATE '2030-12-31', INTERVAL '1 day') AS series(day)
+-- The range must cover more than the generated dataset's own start/end
+-- dates: executives are backdated up to seven years before the world's
+-- start_date (intus_gen.world._build_people), so a compensation or employee-
+-- history row can legitimately carry a date years earlier than anything else
+-- in the extract. 2010 is comfortably ahead of that; 2035 leaves headroom for
+-- --as-of dates later than today's default without needing this file
+-- touched. A date this table cannot cover fails with a foreign key error at
+-- fact-load time, not a wrong answer, so a real bug here was cheap to find —
+-- see docs/DECISIONS.md D-015.
+FROM generate_series(DATE '2010-01-01', DATE '2035-12-31', INTERVAL '1 day') AS series(day)
 ON CONFLICT (date_key) DO NOTHING;
