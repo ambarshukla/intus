@@ -1,0 +1,19 @@
+# Session guide — local only, never pushed
+CLAUDE.md
+
+# Secrets
+.env
+
+# Editor / tooling
+.obsidian/
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local data (regenerable)
+data/
