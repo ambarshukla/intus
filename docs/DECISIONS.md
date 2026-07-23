@@ -268,3 +268,102 @@ warehouse should state its coverage, not look broken.
 exactly; nothing else in either codebase would notice if they drifted, so a test checks
 them against each other. CI runs the scorecard with `--strict`, making a regression in a
 rule a build failure rather than a quietly lowered number.
+
+## D-015 — Facts truncate-and-reload; only dimensions MERGE (2026-07-23)
+
+**Decision.** Every fact transform truncates its table and reloads from staging on each
+run, in contrast to D-012's MERGE for dimensions.
+
+**Alternatives considered.** Using the same MERGE pattern everywhere for consistency —
+rejected because the reason dimensions need it does not apply to facts: nothing
+downstream references a fact row's own key (`compensation_id`, `event_id`, ...) as a
+foreign key, so there is no surrogate-key stability to protect. MERGE's DELETE-then-merge
+dance exists solely to serve that requirement; applying it where the requirement does not
+hold would be needless complexity with no correctness benefit.
+
+**Consequences.** Fact loads are simpler and — for the largest table, `fact_usage_daily`
+at roughly a million rows — meaningfully faster than an equivalent MERGE would be.
+
+## D-016 — Two employee-key lookup functions: strict and forgiving (2026-07-23)
+
+**Decision.** `warehouse.employee_key_as_of(employee_id, date)` returns the SCD2 version
+in force on a date, or NULL if none covers it. `warehouse.employee_key_best` wraps it,
+falling back to the employee's nearest known version instead of NULL. Every
+`dq_exception` detection query uses the strict function; every fact's stored
+`employee_key` column uses the forgiving one.
+
+**Alternatives considered.** One function only, always forgiving — rejected because the
+strict NULL is not incidental, it is the detection mechanism: `SEC_LOGIN_AFTER_TERMINATION`
+fires exactly when strict resolution fails for a date after termination. One function
+only, always strict — rejected because it is wrong whenever an event's date legitimately
+predates the person's earliest known version for reasons that have nothing to do with
+data quality (a budget's `approved_date` is set to the prior November for every fiscal
+period, routinely before a newer approver's first HR record), and it would resolve the
+centrepiece rule's own fact row to the unknown member — an audit trail whose most
+important finding anonymises the person it is about.
+
+**Consequences.** A fact's stored `employee_key` and its associated `dq_exception` (if
+any) can legitimately point at different realities: the fact shows the best-known
+identity, the exception records that strict resolution failed. Both are correct,
+answering different questions.
+
+## D-017 — Unknown members at key -1, with an ordering hazard to remember (2026-07-23)
+
+**Decision.** Every dimension carries one sentinel row at surrogate key `-1`, inserted by
+migration, for a fact whose foreign key cannot resolve to anything real.
+
+**Alternatives considered.** A nullable foreign key — rejected because it pushes the
+problem onto every downstream query: every join becomes a LEFT JOIN, every aggregate
+needs its own COALESCE or silently drops the row from a GROUP BY. An unknown member
+absorbs that once, here, instead of in every report.
+
+**Consequences, learned by breaking it twice.** The sentinel is never a match in any
+dimension transform's source data, by construction — which means any statement that
+operates on "rows the source no longer carries" or "rows currently flagged current"
+without an explicit `key <> -1` exclusion will remove or corrupt it on the very next run.
+Both `dim_employee`'s reconciliation DELETE and its `is_current`-clearing UPDATE had this
+bug before a test caught it.
+
+## D-018 — Deferred foreign keys on every fact-to-dimension reference (2026-07-23)
+
+**Decision.** Every fact table's foreign keys are declared `DEFERRABLE INITIALLY
+DEFERRED`.
+
+**Alternatives considered.** Immediate (the default) constraint checking — this is what
+shipped first, and it failed a real run: regenerating against a different scale or seed
+and rebuilding without a fresh database raised `ForeignKeyViolation` when
+`dim_employee`'s reconciliation DELETE removed a version that a *previous* run's
+not-yet-truncated fact rows still referenced. The violation was real only for an instant
+— by the time the transaction committed, the referencing facts would have been truncated
+and reloaded against the current dimensions — but an immediate constraint has no way to
+know that. Reordering the transform steps (all facts before any dimension delete) was
+considered and rejected: it would only relocate the same problem, since some fact surely
+depends on a dimension attribute a later dimension step still needs to fix.
+
+**Consequences.** Referential integrity is checked once, at commit, across the whole
+transform run rather than after each statement. Reproduced deliberately with a clean
+build, a full population swap, and a rebuild in place, to confirm the fix — the failure
+does not appear when the same population is simply reloaded, which is what made it easy
+to miss initially.
+
+## D-019 — Duplicating small reference data into SQL, checked against the generator by test (2026-07-23)
+
+**Decision.** `AI_COST_MISMATCH` embeds a copy of the AI model rate card; `SEC_IMPOSSIBLE_TRAVEL`
+embeds a copy of the country-to-region mapping. Both are literal copies of constants that
+also exist in `intus_gen`, kept honest by a dedicated test parsing the SQL and comparing
+against the Python source.
+
+**Alternatives considered, and why the obvious ones failed on contact with real
+scoring.** Detecting `AI_COST_MISMATCH` statistically (distance from a per-model average
+cost) — tried first, and it does not work: token counts are drawn from wide
+distributions, so a legitimately long request's cost can sit as far from the mean as a
+genuinely corrupted one, and no threshold separates them reliably. Detecting
+`SEC_IMPOSSIBLE_TRAVEL` by "different country" alone — also tried first, and produced 138
+false positives against 3 seeded defects, because `source_country` is drawn per event
+from a multi-country pool *within* one region, so ordinary same-region variation looked
+identical to the signal. Generating both reference tables from `intus_gen` at build time
+— rejected as more machinery than a rate card or a country list that changes on the order
+of once a quarter deserves; this is the same tradeoff D-010 already made for staging DDL.
+
+**Consequences.** The two copies can drift, and nothing except the dedicated test would
+notice — which is exactly D-010's bargain, made twice more.

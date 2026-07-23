@@ -27,7 +27,7 @@ import psycopg
 
 TRANSFORM_DIR = Path(__file__).resolve().parents[2] / "transform"
 
-_FILENAME = re.compile(r"^(\d{2})_([a-z0-9_]+)\.sql$")
+_FILENAME = re.compile(r"^(\d+)_([a-z0-9_]+)\.sql$")
 
 #: Session setting the transform SQL reads via current_setting().
 RUN_ID_SETTING = "intus.run_id"
@@ -53,13 +53,19 @@ class TransformResult:
 
 
 def discover(transform_dir: Path | None = None) -> tuple[TransformStep, ...]:
-    """Every transform on disk, in execution order."""
+    """Every transform on disk, in execution order.
+
+    Sorted by the numeric value of the order prefix, not by filename text:
+    the prefix is intentionally variable-width (10, 20, ..., 100, 110, ...) so
+    a new step can be inserted between two existing ones without renumbering
+    every file after it, and a plain string sort would put "100" before "20".
+    """
     directory = transform_dir or TRANSFORM_DIR
     if not directory.is_dir():
         raise TransformError(f"transform directory not found: {directory}")
 
     steps: list[TransformStep] = []
-    for path in sorted(directory.glob("*.sql")):
+    for path in directory.glob("*.sql"):
         match = _FILENAME.match(path.name)
         if match is None:
             raise TransformError(f"{path.name}: transforms must be named NN_lower_snake_case.sql")
@@ -70,6 +76,14 @@ def discover(transform_dir: Path | None = None) -> tuple[TransformStep, ...]:
 
     if not steps:
         raise TransformError(f"no transform files in {directory}")
+
+    steps.sort(key=lambda step: int(step.order))
+
+    orders = [step.order for step in steps]
+    duplicates = sorted({order for order in orders if orders.count(order) > 1})
+    if duplicates:
+        raise TransformError(f"duplicate transform order(s): {duplicates}")
+
     return tuple(steps)
 
 

@@ -104,3 +104,20 @@ Terms used in this project, expanded on first use in the docs and kept here.
   rejecting everything scores 100%.
 - **Idempotent** — running it twice leaves the same result as running it once. The
   defining property of a transform, as against a migration.
+- **Point-in-time join** — resolving a type-2 dimension's surrogate key as of a specific
+  date, rather than joining on the natural key alone (which would return every version).
+  The standard way a fact table connects to an SCD2 dimension.
+- **Unknown member** — a sentinel dimension row (here, surrogate key `-1`) that a fact's
+  foreign key falls back to when it cannot resolve a real one, so downstream joins and
+  aggregates never have to special-case a NULL foreign key.
+- **Degenerate dimension** — a natural-key or descriptive attribute kept directly on a
+  fact table rather than modelled as its own dimension (e.g. `subscription_id` on
+  `fact_invoice`). Used here also for identity columns kept alongside a foreign key that
+  can fall back to an unknown member, so the real value stays recoverable.
+- **Deferred constraint** — a foreign key or other constraint checked at transaction
+  commit rather than after each statement (`DEFERRABLE INITIALLY DEFERRED`). What allows
+  a parent row to be removed and a child row to be reloaded against the new parent set
+  within one transaction, so long as both sides agree by commit time.
+- **Fact grain** — the level of detail one fact row represents (e.g. one row per
+  date/account/product for `fact_usage_daily`). Determines what a natural key for the
+  table would be, and whether a surrogate key is worth having at all.

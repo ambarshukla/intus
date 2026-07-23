@@ -549,7 +549,16 @@ def _build_people(
         anniversary = hire
         while True:
             anniversary = anniversary + timedelta(days=365)
-            if anniversary > last_day:
+            # >=, not >: when a termination lands exactly on a work
+            # anniversary, treating that day as an ordinary mid-career change
+            # sets span_start to it and then immediately closes a final span
+            # from that same day back to the same termination date — a
+            # zero-length span the warehouse's SCD2 exclusion constraint
+            # correctly refuses to load (ck_dim_employee_span). Stopping at
+            # the boundary instead means the anniversary that coincides with
+            # the last day is absorbed into the final span, never opens one
+            # of its own.
+            if anniversary >= last_day:
                 break
 
             roll = person_rng.random()
