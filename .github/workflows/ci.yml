@@ -132,3 +132,24 @@ jobs:
       # lowering a number nobody reads.
       - name: Data-quality scorecard
         run: uv run intus-wh dq-score --from /tmp/extract --strict
+
+      # Each reporting view must at least run and return rows against the
+      # smoke extract; test_reporting_views.py checks the arithmetic in
+      # depth, this just confirms nothing here is broken end to end.
+      - name: Reporting views (smoke)
+        run: |
+          uv run python -c "
+          from intus_warehouse import db
+          views = [
+              'rpt_headcount_trend', 'rpt_attrition_by_department',
+              'rpt_sales_pipeline_by_rep', 'rpt_revenue_trend',
+              'rpt_product_usage_trend', 'rpt_ai_cost_by_department',
+              'rpt_budget_variance',
+          ]
+          with db.connect() as connection, connection.cursor() as cursor:
+              for view in views:
+                  cursor.execute(f'SELECT count(*) FROM reporting.{view}')
+                  count = cursor.fetchone()[0]
+                  print(f'  {view:<28} {count:>6,} rows')
+                  assert count > 0, f'{view} returned no rows'
+          "

@@ -2,6 +2,50 @@
 
 Newest first. One entry per merged change; what was built and what was learned.
 
+## 2026-07-23 — Phase 2d: reporting views — closes out Phase 2
+
+Seven views in `reporting`, completing the star schema's consumer side and the SQL
+drill track: `rpt_headcount_trend`, `rpt_attrition_by_department`,
+`rpt_sales_pipeline_by_rep`, `rpt_revenue_trend`, `rpt_product_usage_trend`,
+`rpt_ai_cost_by_department`, `rpt_budget_variance` — one per persona named in the
+target posting (HR analyst, sales ops, FP&A, exec), each built around a genuinely
+different window-function technique (`LAG`, a moving-average frame, a running total,
+`RANK`, an unpartitioned ratio-to-total, `PERCENT_RANK`) rather than seven variations
+on the same pattern.
+
+Views are DDL, not data, and live in a migration (`005_reporting_views.sql`) rather
+than the transform layer: their SQL text is checksummed and versioned like any other
+structure, and they recompute live at query time with no load step of their own.
+
+**None of the seven expose RESTRICTED-tier data at individual grain** — no raw salary,
+no per-employee rating. That's a boundary, not an omission: Phase 4 (row-level security
+and column masking) is what would make an individual-level compensation report
+defensible, and building one now, ahead of the machinery that protects it, would be
+building the exact thing the governance phase exists to prevent. A test enumerates
+every RESTRICTED column name from the generator's own classification and asserts none
+of them appear in `information_schema.columns` for `reporting.*`.
+
+**One real bug, caught only by checking the arithmetic rather than trusting a view
+that ran without error.** The first version of `rpt_attrition_by_department` reported
+Engineering at **4883% annual attrition**. The denominator CTE averaged a 0/1/2
+indicator *per row of `dim_employee`* — which holds one row per SCD2 span, not one row
+per employee — across every span regardless of whether it covered either boundary
+date. Most spans cover neither, so they silently drag a per-row average toward zero
+while the numerator (real termination count) stayed correct, producing a ratio that
+looked like a percentage and wasn't one. Fixed by counting `DISTINCT employee_id`
+separately at each boundary date and averaging the two counts — the number a human
+would actually mean by "average headcount." A regression test asserts every attrition
+rate stays under 100%, and a second test walks the actual `RANK()` output verifying tie
+semantics rather than assuming a dense 1..N sequence, which only happens to hold when
+nothing ties — true at full scale with hundreds of terminations, false at the small CI
+extract, where a handful of departments make ties routine.
+
+Also fixed mid-development, not shipped: Postgres rejects a window function fed
+directly into another window function's argument ("window function calls cannot be
+nested"). `rpt_revenue_trend`'s cumulative net-new ARR needed `LAG`'s result
+materialised in its own CTE layer before a running `SUM()` could read it as a plain
+column.
+
 ## 2026-07-23 — Phase 2c: the fact tables, and full data-quality coverage
 
 Ten fact tables — compensation, performance reviews, subscriptions, invoices,

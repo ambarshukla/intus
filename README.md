@@ -43,15 +43,22 @@ Postgres 16 in Docker, a forward-only SQL migration runner, and a `COPY`-based l
 that lands the extracts into an untyped `staging` schema (1.8M rows in ~3 seconds),
 verifying each file against the generator's manifest hash before it loads.
 
-The star schema is complete: a type-2 `dim_employee` whose no-overlap invariant is
-enforced by a GiST exclusion constraint, a type-1 `dim_account`, `dim_date`,
-`dim_department`, `dim_product`, and ten fact tables spanning every domain the
-generators produce. Data-quality rules classify every problem they find as *rejected*,
-*repaired* or *flagged*, and `intus-wh dq-score` grades detections against the
-generator's seeded defects — reporting recall **and** false positives, because a rule
-that rejects everything scores perfect recall. All **19 of 19** defect types are now
+**Phase 2 complete.** The star schema: a type-2 `dim_employee` whose no-overlap
+invariant is enforced by a GiST exclusion constraint, a type-1 `dim_account`,
+`dim_date`, `dim_department`, `dim_product`, and ten fact tables spanning every domain
+the generators produce. Data-quality rules classify every problem they find as
+*rejected*, *repaired* or *flagged*, and `intus-wh dq-score` grades detections against
+the generator's seeded defects — reporting recall **and** false positives, because a
+rule that rejects everything scores perfect recall. All **19 of 19** defect types are
 covered, at 100% recall with zero false positives, verified at both small and full
-scale. Reporting views are next.
+scale.
+
+Seven reporting views close it out — one per persona named in the target posting (HR
+analyst, sales ops, FP&A, exec), each built around a different window-function
+technique: month-over-month change (`LAG`), a moving average (a frame clause), running
+totals (`SUM() OVER`), leaderboards (`RANK()`), a ratio-to-total, and relative standing
+(`PERCENT_RANK()`). None expose restricted-tier data at individual grain — that
+boundary belongs to Phase 4 (row-level security and column masking), next.
 
 See `docs/BUILD_LOG.md` for the running narrative, `docs/DECISIONS.md` for design
 decisions with the alternatives considered, and `docs/data-catalog.md` (generated) for
@@ -86,7 +93,11 @@ make down        # stop, keeping data;  make db-clean  also drops the volume
 ```
 
 `make dq-score` prints, per rule, how many defects were seeded, how many were found, how
-many were missed, and how many exceptions no seeded defect explains.
+many were missed, and how many exceptions no seeded defect explains. The reporting views
+(`reporting.rpt_headcount_trend`, `rpt_attrition_by_department`,
+`rpt_sales_pipeline_by_rep`, `rpt_revenue_trend`, `rpt_product_usage_trend`,
+`rpt_ai_cost_by_department`, `rpt_budget_variance`) are applied by `make migrate` /
+`make warehouse`; query them directly with `make psql`.
 
 Generated data is gitignored: a deterministic generator plus a committed manifest is a
 better record than several hundred megabytes of committed CSV. The same seed produces

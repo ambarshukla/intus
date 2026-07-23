@@ -121,3 +121,18 @@ Terms used in this project, expanded on first use in the docs and kept here.
 - **Fact grain** — the level of detail one fact row represents (e.g. one row per
   date/account/product for `fact_usage_daily`). Determines what a natural key for the
   table would be, and whether a surrogate key is worth having at all.
+- **Window function** — a SQL function computed across a set of related rows
+  (a "window") without collapsing them into one row, unlike a `GROUP BY`
+  aggregate. `LAG`/`LEAD` (a neighbouring row's value), running `SUM()` (a
+  cumulative total), `RANK()` (a leaderboard position), and `PERCENT_RANK()`
+  (relative standing, 0–1) are the four used across `reporting.*`.
+- **Frame clause** — the `ROWS BETWEEN ... AND ...` part of a window function
+  that narrows the window to a sliding range (e.g. `ROWS BETWEEN 6 PRECEDING
+  AND CURRENT ROW` for a 7-day moving average) rather than the whole partition.
+- **RANK() vs. dense ranking** — `RANK()` leaves gaps after a tie (1, 1, 3);
+  `DENSE_RANK()` does not (1, 1, 2). Assuming no gaps without checking for
+  ties is a real mistake this project's own tests caught.
+- **Ratio-to-total** — a value's share of a group's total, expressed with an
+  unpartitioned or differently-partitioned `SUM() OVER ()` as the denominator
+  inside the same query that computes the numerator, rather than a second
+  aggregate query joined back.
