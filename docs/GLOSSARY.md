@@ -165,3 +165,17 @@ Terms used in this project, expanded on first use in the docs and kept here.
 - **SQL warehouse** — Databricks's SQL-optimized compute, addressed by a `warehouse_id`,
   that runs both ad-hoc queries (via the SQL Statement Execution API) and `sql_task`
   bundle jobs. Not a credential — safe to write in plaintext, unlike a workspace host.
+- **`QUALIFY`** — a `WHERE`-like clause that filters on a window function's result
+  directly, without wrapping the query in a subquery just to reference it in a `WHERE`.
+  Silver's substitute for Postgres's `SELECT DISTINCT ON (...) ... ORDER BY ...`, which
+  does not exist on this platform (`DISTINCT ON` parses as a function call named `ON`
+  here, confirmed live).
+- **CHECK constraint enforcement, single-row vs. cross-row** — Delta CHECK constraints
+  may only reference the row being written; a constraint referencing another row (e.g.
+  "no other row for this key overlaps this one") is rejected at `ADD CONSTRAINT` time.
+  Postgres's `EXCLUDE USING gist` has no Delta equivalent for exactly this reason — see
+  docs/DECISIONS.md D-024.
+- **PRIMARY KEY / FOREIGN KEY, informational-only** — Unity Catalog accepts these
+  constraint declarations, but does not enforce them: a duplicate primary key inserts
+  without error. They exist for the query optimiser and BI/catalog tooling to read, not
+  as a guarantee a write can violate and be rejected for.

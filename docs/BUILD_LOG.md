@@ -2,6 +2,74 @@
 
 Newest first. One entry per merged change; what was built and what was learned.
 
+## 2026-07-23 — Phase 3b: the lakehouse silver layer
+
+Ports every dimension and fact transform from `warehouse/transform/` (5 dimensions, 10
+facts, 19 data-quality rules across them) into `lakehouse/sql/{20,21,22}_*.sql`, one SQL
+dialect over — same file-per-concern structure as the Postgres originals, same rule
+order, same target_key format so a future scorecard could reuse the DQ-rule scoring
+approach warehouse already has.
+
+**Every dialect question was probed live before being designed around, not assumed from
+docs.** Databricks SQL turned out to be far closer to Postgres than expected — `::`
+casts, tuple `IS DISTINCT FROM`, `ILIKE`, `percentile_cont(...) WITHIN GROUP`,
+`CROSS JOIN LATERAL`, and a `VALUES (...) AS t(cols)` table constructor all work
+unchanged. Where it genuinely diverges:
+
+- **No exclusion constraint, and no enforced PRIMARY/FOREIGN KEY at all.** Tested live:
+  a CHECK constraint referencing another row is rejected outright
+  (`DELTA_UNSUPPORTED_EXPRESSION_CHECK_CONSTRAINT`); a declared PRIMARY KEY accepts a
+  duplicate insert without complaint. `dim_employee`'s SCD2 no-overlap rule
+  (`ex_dim_employee_no_overlap` in Postgres) has no equivalent backstop here — the
+  guarantee moves entirely into the transform's own self-join (see docs/DECISIONS.md
+  D-024 for the alternatives considered and the tradeoff this settles on).
+- **No `CREATE TEMP TABLE ... ON COMMIT DROP`.** `CREATE OR REPLACE TEMPORARY VIEW`
+  is the substitute — confirmed live that a temp view created earlier in a session is
+  visible to a later `MERGE` in the same session, which is what one job-task file
+  execution is.
+- **No `DISTINCT ON`.** Postgres's dedup idiom parses on this platform as a function
+  call named `ON` (`UNRESOLVED_ROUTINE`). `QUALIFY row_number() OVER (...) = 1` is the
+  substitute — filters a window function's result the same way `HAVING` filters an
+  aggregate's.
+- **No `generate_series`.** `dim_date`'s calendar generation uses
+  `explode(sequence(start, end, INTERVAL 1 DAY))` instead; `weekofyear()` is already
+  ISO-8601, and ISO day-of-week needed a rotation (`((dayofweek(d)+5)%7)+1`) since
+  Spark's `dayofweek()` is 1=Sunday, not 1=Monday. All four checked against known dates
+  (2026-07-23 = Thursday, 2026-07-26 = Sunday) before trusting them in the real query.
+- **No `ON CONFLICT`.** `MERGE ... WHEN NOT MATCHED THEN INSERT` is Delta's idempotent-
+  insert idiom, used for the four unknown-member sentinel rows the same way Postgres
+  used `ON CONFLICT DO NOTHING`.
+- **CHECK constraints cannot be declared inline in `CREATE TABLE`** on this platform
+  ("Only PRIMARY KEY and FOREIGN KEY constraints are currently supported" inline) — they
+  go in a separate `ALTER TABLE ... ADD CONSTRAINT`, and because this file reruns on
+  every job execution, that statement is preceded by `DROP CONSTRAINT IF EXISTS` so a
+  rerun doesn't fail on "constraint already exists."
+- **No `warehouse.transform_run` / `run_id` bookkeeping.** Same reasoning as bronze
+  dropping `staging.load_audit` (D-023): `dq_exception` is truncated and rebuilt every
+  run instead, and Delta's own version history recovers any past run's findings if
+  needed. See D-025.
+
+**Validated by running every statement live against the real workspace**, session by
+session (temp views require a persistent session, unlike the bronze validation which
+was single independent statements) — not just a static SQL read. All three files ran
+end to end with no errors: 9,496 `dim_date` rows, 206 `dim_employee` versions, and all
+ten facts populated. Cross-checked the 18 `dq_exception` rule codes this run actually
+produced against the same 18 (of 19) rule codes the Postgres warehouse's own latest run
+detected on its own data — including confirming `SEC_LOGIN_AFTER_TERMINATION` genuinely
+finds nothing in *both* systems on their respective current datasets, rather than
+assuming a silently broken query. (The two platforms' extracts differ in scale/seed, so
+absolute counts aren't expected to match yet — that exact-parity proof is Phase 3c's
+job, not this one's.)
+
+`lakehouse/tests/test_silver_schema.py` adds the schema-drift check bronze's own test
+already established the pattern for, this time comparing the ported Databricks DDL's
+column names against the original Postgres DDL directly (dq_exception and
+transform_run excluded, since they diverge on purpose — see D-025).
+`lakehouse/tests/test_silver_dq_rates.py` re-checks the two hand-duplicated reference
+tables (AI model pricing, country-to-region) against `intus_gen` a second time, since
+they were hand-ported and a copy-paste slip wouldn't be caught by the Postgres-side
+test at all.
+
 ## 2026-07-23 — Phase 3a: Databricks catalog, and the bronze layer
 
 Phase 3 starts: legacy Postgres warehouse → Databricks lakehouse. This entry covers
