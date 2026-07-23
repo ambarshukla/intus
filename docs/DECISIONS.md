@@ -445,3 +445,61 @@ second provenance mechanism that could itself drift from what actually happened.
 Delta's own history rather than a bespoke audit table — one more small way the two
 platforms' idiomatic answers to the same problem differ, which is itself part of what
 this migration is meant to show.
+
+## D-024 — dim_employee's no-overlap rule moves entirely into the transform (2026-07-23)
+
+**Decision.** `intus.silver.dim_employee`'s SCD2 no-overlap invariant — no two spans for
+one employee may cover the same day — is enforced only by the self-join in
+`21_silver_dimensions.sql` (HR_OVERLAPPING_SPAN, ported near-verbatim from the Postgres
+original) and the `ROW_NUMBER()` that computes `is_current`. Neither is backed by a
+database-level constraint on this platform.
+
+**Alternatives considered.** Tested live, before deciding anything: (a) a Delta CHECK
+constraint expressing the rule directly — rejected by the platform outright
+(`DELTA_UNSUPPORTED_EXPRESSION_CHECK_CONSTRAINT`, "`exists()` cannot be used in a CHECK
+constraint"), because Delta CHECK constraints may only reference the row being written,
+never another row. (b) A declared `PRIMARY KEY` / partial-uniqueness constraint as a
+backstop — also tested live: declared one, inserted a duplicate key anyway, it went in
+without complaint. Unity Catalog's PRIMARY KEY and FOREIGN KEY constraints are metadata
+for the query optimiser and BI tools, not enforcement, on this platform today. (c) Delta
+Live Tables, which has richer validation ("expectations") — rejected as disproportionate:
+it is a different compute product from the plain SQL-file bundle tasks D-022 already
+chose, and adopting it to backstop one invariant would reopen that decision for a single
+rule's sake. (d) A second automated check that scans the finished table for violations
+and fails the build if any exist — the stronger option, and the one to revisit if this
+table's write path ever gains a second writer; not built now because the write path is a
+single sequential job task and the self-join already prevents the condition from ever
+being written, so a second check would currently only ever prove nothing was wrong (see
+Consequences).
+
+**Consequences.** The guarantee is exactly as strong as the transform's own logic and no
+stronger — there is no independent backstop catching a future bug in that logic the way
+Postgres's `EXCLUDE USING gist` constraint would. This is a real, load-bearing gap
+between the two platforms' guarantees for the same table, not a detail to gloss over; the
+mitigating fact is that `21_silver_dimensions.sql` is the only writer of this table, so
+"the query that writes it is also the query that must get this right" is a smaller
+surface than it would be with multiple writers. If a second writer is ever added, revisit
+alternative (d).
+
+## D-025 — dq_exception drops run_id / transform_run bookkeeping (2026-07-23)
+
+**Decision.** `intus.silver.dq_exception` has no `run_id` column and no counterpart to
+`warehouse.transform_run`. It is truncated and rebuilt at the start of every run (first
+statement of `21_silver_dimensions.sql`), the same truncate-and-reload shape every fact
+table already uses.
+
+**Alternatives considered.** Porting `transform_run` (an identity-keyed bookkeeping
+table, one row per execution) and a `run_id` column on every `dq_exception` row, set from
+a Databricks SQL session variable (`DECLARE VARIABLE` / `SET VARIABLE`, confirmed live to
+work within one script session) — rejected for the same reason `staging.load_audit` was
+dropped in bronze (D-023): the platform already records what a hand-rolled run-tracking
+table exists to record. `DESCRIBE HISTORY intus.silver.dq_exception` gives every past
+version of this table, with a timestamp, so "what did run N find" has an answer without a
+second bookkeeping mechanism that could itself drift from what actually happened.
+
+**Consequences.** A cross-run comparison (`did this rule's count change since last week?`)
+reads Delta table history at a specific version rather than filtering a `run_id` column —
+one more small, deliberate divergence from the Postgres schema, alongside D-024, both
+driven by the same underlying fact: guarantees Postgres gets from the database itself
+have to be re-derived from what Delta actually provides, not assumed to transfer across
+unchanged.

@@ -53,6 +53,33 @@ resources:
               path: lakehouse/sql/10_bronze.sql
               source: GIT
 
+        - task_key: silver_schema
+          depends_on:
+            - task_key: bronze
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: lakehouse/sql/20_silver_schema.sql
+              source: GIT
+
+        - task_key: silver_dimensions
+          depends_on:
+            - task_key: silver_schema
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: lakehouse/sql/21_silver_dimensions.sql
+              source: GIT
+
+        - task_key: silver_facts
+          depends_on:
+            - task_key: silver_dimensions
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: lakehouse/sql/22_silver_facts.sql
+              source: GIT
+
 # One target, one live environment — same reasoning as parvum (D-007 there):
 # production mode means no auto-paused triggers and no dev-mode name prefix.
 targets:
