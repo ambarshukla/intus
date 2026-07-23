@@ -19,7 +19,8 @@ PGUSER ?= intus
 PGDB   ?= intus
 
 .PHONY: help sync fmt lint test check generate catalog clean \
-        up down psql db-status db-clean migrate load build dq-score warehouse
+        up down psql db-status db-clean migrate load build dq-score warehouse \
+        land deploy-job run-job
 
 # Two traps here, both of which have bitten on the sibling project:
 #  -h        MAKEFILE_LIST is "Makefile .env" (from -include above), and grep
@@ -34,14 +35,15 @@ sync: ## install/refresh the workspace virtualenv from uv.lock
 	uv sync
 
 fmt: ## format all Python in place
-	uv run ruff format gen warehouse
+	uv run ruff format gen warehouse lakehouse
 
 lint: ## ruff format check + lint (what CI runs)
-	uv run ruff format --check gen warehouse && uv run ruff check gen warehouse
+	uv run ruff format --check gen warehouse lakehouse && uv run ruff check gen warehouse lakehouse
 
 test: ## run every test suite
 	cd gen && uv run pytest
 	cd warehouse && uv run pytest
+	cd lakehouse && uv run pytest
 
 check: lint test ## lint and test — the pre-commit gate
 
@@ -86,3 +88,23 @@ dq-score: ## score detected exceptions against the generator's defect manifest
 	cd warehouse && uv run intus-wh dq-score --from ../$(OUT)
 
 warehouse: up migrate load build dq-score ## full local rebuild: start, migrate, load, build, score
+
+# --------------------------------------------------------------------------
+# Lakehouse (Databricks; shared Free Edition workspace, catalog `intus`)
+# --------------------------------------------------------------------------
+
+land: ## upload data/raw/*.csv to the Unity Catalog landing volume (needs DATABRICKS_HOST in .env)
+	@test -n "$(DATABRICKS_HOST)" || { echo "DATABRICKS_HOST not set — copy .env.example to .env and fill it in"; exit 1; }
+	for f in $(OUT)/*.csv; do databricks fs cp "$$f" "dbfs:/Volumes/intus/landing/raw/$$(basename $$f)" --overwrite; done
+
+deploy-job: ## deploy the Databricks bundle in databricks.yml (needs DATABRICKS_HOST)
+	@test -n "$(DATABRICKS_HOST)" || { echo "DATABRICKS_HOST not set — copy .env.example to .env and fill it in"; exit 1; }
+	databricks bundle deploy
+
+# Only meaningful once databricks.yml's git_source branch (main) actually
+# contains whatever this points at — a bundle change that adds a task
+# pointing at a new SQL file must be merged before this runs, or the job
+# checks out main, finds nothing there, and fails outright.
+run-job: ## run the lakehouse build now (needs deploy-job to have run against a merged main)
+	@test -n "$(DATABRICKS_HOST)" || { echo "DATABRICKS_HOST not set — copy .env.example to .env and fill it in"; exit 1; }
+	databricks bundle run lakehouse_build

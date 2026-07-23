@@ -409,3 +409,39 @@ employees explicitly rather than aggregating the table's own row count, which is
 count, not a person count. `test_attrition_rate_is_a_plausible_percentage` guards the
 specific regression; `test_headcount_matches_a_direct_point_in_time_count` cross-checks
 `rpt_headcount_trend` against the same distinct-count logic written out independently.
+
+## D-022 — Lakehouse layers as SQL-file bundle tasks, not notebooks or PySpark (2026-07-23)
+
+**Decision.** Bronze, and later silver and gold, are `.sql` files run by Databricks
+Asset Bundle `sql_task.file` jobs with `source: GIT` — the same `git_source` mechanism
+parvum's `notebook_task`s use, pointed at a SQL file instead of a notebook.
+
+**Alternatives considered.** (a) PySpark notebooks, parvum's pattern — rejected because
+the thing this phase exists to demonstrate is a legacy *SQL* warehouse migrating to a
+new platform; rewriting the transform logic into a different language would trade the
+one comparison that matters (the same query, two SQL dialects) for a rewrite that
+obscures it. (b) Databricks SQL notebooks (`.sql` extension, run as `notebook_task`) —
+functionally close, but `sql_task.file` is the more direct match for "run this SQL file
+against this warehouse," with no notebook-specific ceremony (cell markers, `%sql`
+magics) the SQL doesn't need.
+
+**Consequences.** Every lakehouse transform is plain SQL, reviewable by anyone who read
+the Postgres migrations, and the dialect differences (below) become the visible content
+of the migration story rather than something buried in a rewrite.
+
+## D-023 — Delta table history replaces `staging.load_audit`; no hand-rolled provenance table (2026-07-23)
+
+**Decision.** Bronze does not carry an equivalent of `staging.load_audit`. Provenance
+(what loaded, when, how many rows) comes from `DESCRIBE HISTORY intus.bronze.<table>`,
+which Delta records for every `CREATE OR REPLACE TABLE` automatically.
+
+**Alternatives considered.** A bronze `load_audit` table mirroring the Postgres one,
+populated by a second statement after each `CREATE OR REPLACE TABLE` — rejected because
+the platform already tracks exactly this (operation, timestamp, row counts, per
+version) with no extra code, and a hand-rolled table doing the same job would be a
+second provenance mechanism that could itself drift from what actually happened.
+
+**Consequences.** A parity check that needs "what was in bronze at load time N" reads
+Delta's own history rather than a bespoke audit table — one more small way the two
+platforms' idiomatic answers to the same problem differ, which is itself part of what
+this migration is meant to show.

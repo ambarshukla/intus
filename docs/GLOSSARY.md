@@ -136,3 +136,32 @@ Terms used in this project, expanded on first use in the docs and kept here.
   unpartitioned or differently-partitioned `SUM() OVER ()` as the denominator
   inside the same query that computes the numerator, rather than a second
   aggregate query joined back.
+- **Unity Catalog (UC)** — Databricks's governance layer over data assets: a three-level
+  namespace (catalog.schema.table), plus the access-control, lineage, and (eventually,
+  Phase 4) row/column-security machinery built on top of it.
+- **Catalog / schema / volume** — Unity Catalog's namespace levels. A *catalog* is the
+  top-level container (`intus`, isolated from the shared workspace's `parvum`); a
+  *schema* groups objects within it (`bronze`, `silver`, `gold`, `landing`); a *volume*
+  is a managed area for non-tabular files (`intus.landing.raw`, where uploaded CSVs
+  land before `read_files()` ingests them).
+- **Delta Lake / Delta table** — the table format every Unity Catalog managed table
+  uses: versioned, ACID, with automatic history (`DESCRIBE HISTORY`) recording every
+  write. The lakehouse's answer to what `staging.load_audit` does by hand in Postgres.
+- **`read_files()`** — a Databricks SQL table-valued function that reads files (here,
+  CSVs in a volume) directly into a query or `CREATE TABLE ... AS SELECT`, with an
+  explicit schema overriding type inference — the mechanism bronze uses for untyped
+  landing, playing the role Postgres's `COPY` plays for staging.
+- **U2M (user-to-machine) OAuth** — the browser-based login flow a human uses to
+  authorize the Databricks CLI, as against machine-to-machine auth (a service
+  principal's client secret) that would run unattended in CI. Phase 3 needed this once,
+  interactively, before any workspace object could be created.
+- **Databricks Asset Bundle** — a job/pipeline definition as YAML (`databricks.yml`)
+  deployed via `databricks bundle deploy`, so a data pipeline is reviewable and in git
+  rather than clicked together in the Workflows UI.
+- **`git_source`** — a bundle job setting that has each run check out a git branch and
+  execute code from that checkout, rather than from whatever was last deployed. Means
+  the running pipeline can never drift from what's on `main`, since there is no second
+  deployed copy to go stale.
+- **SQL warehouse** — Databricks's SQL-optimized compute, addressed by a `warehouse_id`,
+  that runs both ad-hoc queries (via the SQL Statement Execution API) and `sql_task`
+  bundle jobs. Not a credential — safe to write in plaintext, unlike a workspace host.

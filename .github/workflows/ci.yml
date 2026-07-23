@@ -1,8 +1,7 @@
 # CI: every pull request (and main) must pass format check, lint, and tests.
 #
 # One job per workspace component so each appears as its own required status
-# check; `gen` is the only one today, with the legacy warehouse and lakehouse
-# phases adding theirs later. Deliberately written out rather than expressed
+# check. Deliberately written out rather than expressed
 # as a matrix — a matrix renames the status checks, which silently detaches
 # any branch-protection rule that requires a check by name.
 name: CI
@@ -153,3 +152,35 @@ jobs:
                   print(f'  {view:<28} {count:>6,} rows')
                   assert count > 0, f'{view} returned no rows'
           "
+
+  lakehouse:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lakehouse
+    # No live Databricks smoke test here yet: that needs a workspace host and
+    # a service-principal token as repo secrets, neither configured. The
+    # schema-drift test (bronze SQL vs. the generators' Dataset registry) is
+    # deliberately static so this job stays fast and needs no cloud
+    # credentials at all — see lakehouse/tests/test_bronze_schema.py. Live
+    # verification against the real workspace is a manual step for now (see
+    # docs/BUILD_LOG.md); wiring it into CI is an open item.
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.29"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Tests
+        run: uv run pytest

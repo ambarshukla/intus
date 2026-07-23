@@ -60,6 +60,14 @@ totals (`SUM() OVER`), leaderboards (`RANK()`), a ratio-to-total, and relative s
 (`PERCENT_RANK()`). None expose restricted-tier data at individual grain — that
 boundary belongs to Phase 4 (row-level security and column masking), next.
 
+**Phase 3 in progress: migration to Databricks.** `lakehouse/` holds the bronze layer —
+Unity Catalog catalog `intus` (its own, isolated from the shared workspace's `parvum`
+schema), a landing volume, and `lakehouse/sql/10_bronze.sql`, which lands the same
+twelve extracts as untyped Delta tables via `read_files()`, the lakehouse's answer to
+`staging`. Verified end to end against the live workspace: every table's row count
+matches the generator's manifest exactly. Silver (dimensions and facts), gold
+(reporting views), and cross-platform parity checks are next.
+
 See `docs/BUILD_LOG.md` for the running narrative, `docs/DECISIONS.md` for design
 decisions with the alternatives considered, and `docs/data-catalog.md` (generated) for
 the full column-level classification.
@@ -103,6 +111,18 @@ Generated data is gitignored: a deterministic generator plus a committed manifes
 better record than several hundred megabytes of committed CSV. The same seed produces
 byte-identical output on any machine, which is what makes the manifest's per-file
 SHA-256 worth recording.
+
+The Databricks lakehouse (Unity Catalog catalog `intus`, on a shared workspace):
+
+```bash
+databricks auth login --host <workspace URL>  # one-time, browser-based
+make land         # upload data/raw/*.csv to the Unity Catalog landing volume
+make deploy-job   # deploy the bundle in databricks.yml
+make run-job      # run the lakehouse build (needs deploy-job's changes merged to main first)
+```
+
+`DATABRICKS_HOST` (in `.env`) points every one of these at the right workspace; see
+`.env.example`.
 
 ## Relationship to `parvum`
 

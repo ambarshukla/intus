@@ -1,0 +1,63 @@
+# Databricks Asset Bundle — the lakehouse build defined as code.
+#
+# Same shape as parvum's bundle: the job runs from a git checkout
+# (git_source), so the SQL files it points at are read straight from GitHub
+# at run time, not from whatever got deployed locally. sync.paths is empty
+# for the same reason parvum's is — nothing here is read from an uploaded
+# copy, so there is no second copy of the SQL to drift from the reviewed one.
+#
+# The workspace host is deliberately absent — the CLI takes it from
+# DATABRICKS_HOST (.env locally, a repo secret in CI later), so the public
+# repo carries no workspace URL. Same recipe as warehouse/.
+bundle:
+  name: intus
+
+# The SQL warehouse id is not a secret (it identifies compute, not a
+# credential), so it is a bundle variable with a default rather than
+# something callers must supply — unlike parvum's alert_email, which is
+# left with no default on purpose because a real address in a public bundle
+# is a privacy leak.
+variables:
+  warehouse_id:
+    description: SQL warehouse id used to run the lakehouse's SQL tasks.
+    default: "0fb6ed828ed1e874"
+
+sync:
+  paths: []
+
+resources:
+  jobs:
+    lakehouse_build:
+      name: intus-lakehouse-build
+      description: >-
+        Rebuilds the intus lakehouse from the landed extracts. Bronze lands
+        the CSVs uploaded to the Unity Catalog volume `intus.landing.raw` as
+        untyped Delta tables, one per dataset — the same role
+        warehouse/sql/002_staging.sql plays for the legacy Postgres
+        warehouse, one SQL dialect over. Silver (dimensions and facts) and
+        gold (reporting views) land here as later phases add them.
+
+      # Same rationale as parvum's git_source: main is protected and
+      # CI-gated, so "the job runs main" already has a review gate in front
+      # of it, and there is no separate deploy of the SQL itself to drift.
+      git_source:
+        git_url: https://github.com/ambarshukla/intus
+        git_provider: gitHub
+        git_branch: main
+
+      tasks:
+        - task_key: bronze
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: lakehouse/sql/10_bronze.sql
+              source: GIT
+
+# One target, one live environment — same reasoning as parvum (D-007 there):
+# production mode means no auto-paused triggers and no dev-mode name prefix.
+targets:
+  prod:
+    mode: production
+    default: true
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
