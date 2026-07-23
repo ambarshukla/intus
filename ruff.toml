@@ -10,6 +10,8 @@ src = [
     "gen/tests",
     "warehouse/src",
     "warehouse/tests",
+    "lakehouse/src",
+    "lakehouse/tests",
 ]
 
 [lint]

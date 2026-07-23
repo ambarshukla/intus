@@ -1,0 +1,38 @@
+# The Databricks lakehouse: bronze/silver/gold SQL run by a git_source job
+# (see ../databricks.yml), plus the thin Python that keeps the SQL honest —
+# schema-drift checks against the generators' registry now, parity checks
+# against the legacy warehouse as later phases add silver and gold. The SQL
+# itself, not this package, is the artefact this phase exists to demonstrate.
+
+[project]
+name = "intus-lakehouse"
+version = "0.1.0"
+description = "Databricks lakehouse (bronze/silver/gold) for the Halcyon dataset"
+requires-python = ">=3.12"
+dependencies = [
+    # The generators' Dataset registry, used the same way warehouse/ uses it:
+    # to assert that hand-written SQL (here, the bronze read_files() schemas)
+    # has not drifted from the schemas that produce the extracts.
+    "intus-gen",
+]
+
+[tool.uv.sources]
+intus-gen = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/intus_lakehouse"]
+
+# Ruff config is shared across the workspace: see <repo>/ruff.toml.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

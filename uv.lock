@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 [manifest]
 members = [
     "intus-gen",
+    "intus-lakehouse",
     "intus-warehouse",
 ]
 
@@ -92,6 +93,29 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "hypothesis", specifier = ">=6.100" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.5" },
+]
+
+[[package]]
+name = "intus-lakehouse"
+version = "0.1.0"
+source = { editable = "lakehouse" }
+dependencies = [
+    { name = "intus-gen" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "intus-gen", editable = "gen" }]
+
+[package.metadata.requires-dev]
+dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.5" },
 ]

@@ -2,6 +2,67 @@
 
 Newest first. One entry per merged change; what was built and what was learned.
 
+## 2026-07-23 — Phase 3a: Databricks catalog, and the bronze layer
+
+Phase 3 starts: legacy Postgres warehouse → Databricks lakehouse. This entry covers
+infrastructure (a new Unity Catalog catalog, isolated from the shared workspace's
+`parvum` schema) and the bronze layer — the lakehouse's equivalent of
+`warehouse/sql/002_staging.sql`.
+
+**Live infrastructure, verified against the real workspace, not assumed.** The
+metastore's `catalogs create` CLI call fails outright on this Free Edition workspace
+("Metastore storage root URL does not exist") — but the SQL-statement path
+(`CREATE CATALOG intus`) succeeds, picking up the account's default storage
+automatically where the plain CLI call does not. Catalog `intus` now exists, isolated
+by design from `workspace.parvum` per the CLAUDE.md rule, with `bronze`/`silver`/`gold`
+schemas and a `landing.raw` managed volume for uploaded extracts.
+
+**Bronze uses SQL tasks, not notebooks or PySpark.** Databricks bundle jobs support
+`sql_task.file`, which runs a `.sql` file straight from a git checkout — the same
+`git_source` mechanism parvum's notebook tasks use, but for SQL. That keeps this
+migration what it claims to be: the *same* transform logic in a different SQL dialect,
+not a rewrite into a different language that would obscure the comparison. Confirmed
+against the live bundle schema (`databricks bundle schema`) before committing to the
+design, not assumed from documentation that might not match this CLI version.
+
+`lakehouse/sql/10_bronze.sql` lands all twelve datasets from
+`/Volumes/intus/landing/raw/*.csv` into `intus.bronze.*` Delta tables via
+`read_files()` with an explicit all-`STRING` schema — untyped landing, the same design
+staging's all-`text` columns implement in Postgres, and for the same reason: a bad row
+should fail the *transform* with a business reason, not fail the *load* with a byte
+offset. `CREATE OR REPLACE TABLE ... AS SELECT` is truncate-and-reload's equivalent
+here — idempotent by construction, same as staging's `TRUNCATE` + `COPY`.
+
+**Verified end to end against the live warehouse**, not just deployed: all twelve
+extracts uploaded to the landing volume, all twelve `CREATE OR REPLACE TABLE`
+statements run via the SQL Statement Execution API, and every resulting table's row
+count checked against the generator's manifest — 12/12 exact matches (spot check:
+`sec_access_event` expected 7,952, loaded 7,952). `DESCRIBE` confirms every landed
+column is `string`, matching staging's "every column is text" invariant.
+
+**The bundle was deployed but the job was not run.** `databricks bundle deploy`
+registers the job resource, which is safe pre-merge — but the job's `git_source` checks
+out `main`, and `lakehouse/sql/10_bronze.sql` isn't there until this PR merges. Running
+it now would fail against a file the remote branch doesn't have — the exact mistake
+CLAUDE.md already flags from parvum's history. The live verification above used direct
+SQL Statement API calls instead, which needed no job run at all.
+
+A drift test (`lakehouse/tests/test_bronze_schema.py`) checks the bronze SQL's
+declared columns against `intus_gen`'s `Dataset` registry — the fourth reuse of the
+"duplicate small reference data into SQL, test for drift" pattern (D-019). It's
+deliberately static (regex over the SQL text, no live connection) so the `lakehouse`
+CI job stays fast and needs no cloud credentials; verified it actually catches drift by
+breaking a column name, watching it fail, and restoring it.
+
+**No CI job runs live against Databricks yet** — that needs `DATABRICKS_HOST` and a
+service-principal token as repo secrets, neither configured. Open item, not silently
+worked around.
+
+**Also fixed:** `ruff.toml`'s `src` list didn't include `lakehouse/src` or
+`lakehouse/tests`, so ruff sorted `intus_gen` as third-party in the new test file
+instead of first-party — caught immediately by `ruff check`, not a real bug, but the
+kind of thing worth a one-line fix rather than an inline `# noqa`.
+
 ## 2026-07-23 — Phase 2d: reporting views — closes out Phase 2
 
 Seven views in `reporting`, completing the star schema's consumer side and the SQL
