@@ -1,0 +1,35 @@
+# Local dev services for the legacy warehouse.
+#
+# Postgres major version pinned to 16: the "legacy" framing is about the
+# architecture (plain-SQL ETL into a star schema), not about running an
+# genuinely ancient engine, and pinning keeps behaviour identical across
+# machines and CI.
+name: intus
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: intus-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-intus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-intus_local_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-intus}
+    ports:
+      # Port 5433, not the default 5432: a sibling project on this machine
+      # already binds 5432, and two projects fighting over a port is a
+      # confusing failure (you connect successfully — to the wrong database).
+      #
+      # Loopback-only, because a dev database with default credentials must
+      # not be reachable from the network whatever the host firewall permits.
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      # Named volume so `make down` preserves data; only `make db-clean` drops it.
+      - intus_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-intus} -d ${POSTGRES_DB:-intus}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  intus_pgdata:

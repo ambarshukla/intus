@@ -64,3 +64,62 @@ jobs:
         run: |
           uv run intus-gen catalog --out ../docs/data-catalog.md
           git diff --exit-code -- ../docs/data-catalog.md
+
+  warehouse:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: warehouse
+    # The warehouse tests apply real migrations and COPY real extracts into a
+    # real Postgres; a service container gives CI the database that docker
+    # compose provides locally. Credentials mirror infra/docker-compose.yml.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: intus
+          POSTGRES_PASSWORD: intus_local_dev
+          POSTGRES_DB: intus
+        ports:
+          # Mapped to 5433 to match the local default, so INTUS_PG_DSN below is
+          # the same string a developer would use.
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U intus -d intus"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      INTUS_PG_DSN: postgresql://intus:intus_local_dev@127.0.0.1:5433/intus
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.29"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      # -rs so a skipped DB test is visible in the log. The suite skips itself
+      # when no Postgres is reachable, which is right locally and wrong here —
+      # in CI the service container exists, so a skip means something broke.
+      - name: Tests
+        run: uv run pytest -rs
+
+      # End-to-end against the service container: generate an extract, apply
+      # migrations, load it. Exercises the console scripts and the real COPY
+      # path, which the unit tests reach only through library calls.
+      - name: Migrate and load (smoke)
+        run: |
+          uv run --directory ../gen intus-gen generate --scale small --seed 7 --out /tmp/extract
+          uv run intus-wh migrate
+          uv run intus-wh load --from /tmp/extract
+          uv run intus-wh status

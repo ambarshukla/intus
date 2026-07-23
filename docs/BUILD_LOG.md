@@ -2,6 +2,55 @@
 
 Newest first. One entry per merged change; what was built and what was learned.
 
+## 2026-07-23 — Phase 2a: the legacy warehouse — Postgres, migrations, staging load
+
+The "before" system in the modernization story. Postgres 16 in Docker (port 5433, not
+5432 — a sibling project on the same machine already binds the default, and connecting
+successfully to the *wrong* database is a worse failure than not connecting at all),
+plus a second workspace member `warehouse/` holding `intus_warehouse`.
+
+Three schemas with three different contracts: `staging` (landed extracts, every column
+text, no constraints, truncate-and-reload), `warehouse` (the conformed star schema —
+next PR), `reporting` (views only). Mixing them means none of them has a contract.
+
+**Staging is untyped on purpose.** The extracts contain deliberate defects. If staging
+were typed, COPY would fail on the first bad row and one malformed field would sink a
+million-row load with a message pointing at a byte offset. Landing everything as text
+moves rejection from the *load* to the *transform*, where a row can be rejected with a
+business reason and — the part that matters — recorded rather than failing the batch.
+Staging also has no primary keys: two seeded defects are duplicate rows, and the goal
+is to detect and report them, not to make them unrepresentable.
+
+**COPY, not INSERT.** 1.8M rows land in 3.2 seconds. Row-by-row inserts would take
+minutes and a million round trips, and COPY is what a real warehouse load uses anyway.
+
+**Provenance is checked, not assumed.** Each file's SHA-256 comes from the generator's
+manifest and is verified before loading; a file that disagrees with its manifest is
+refused. `staging.load_audit` records the hash, seed, scale and as-of date per load, so
+"which extract is in staging right now?" has an answer that survives the next reload.
+
+**The migration runner** is ~100 lines standing in for Flyway: ordered `NNN_name.sql`
+files, recorded in `public.schema_migration`, checksummed so editing an applied
+migration is an error rather than silent divergence, and forward-only. Checksums
+normalise line endings first, or a CRLF checkout would report tampering that never
+happened.
+
+**Hand-written DDL, drift caught by test.** Generating staging DDL from the Phase 1
+`Dataset` registry would make drift impossible and would also hide the SQL, which is
+the artefact this phase exists to show. Instead the DDL is written by hand and a test
+compares the live `information_schema` against the registry — same safety, real SQL in
+the repo.
+
+The tests caught one bug twice, in two different modules, and it is worth writing down.
+On a non-autocommit psycopg connection, `connection.transaction()` opens a **savepoint**
+inside the surrounding transaction rather than a transaction of its own. So "each
+migration commits independently" was false — everything was one uncommitted unit, and a
+failure in the last migration would roll back all the earlier ones. The property was
+exactly backwards: the whole *run* was atomic, which is precisely what transactional DDL
+is supposed to save you from. The loader had the identical bug: a successful load was
+never made durable. Both now commit explicitly, and both tests assert the property
+rather than the mechanism.
+
 ## 2026-07-23 — Phase 1: the Halcyon synthetic data generators
 
 First code in the repo, and with it the whole Python toolchain: a uv workspace

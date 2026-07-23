@@ -12,7 +12,14 @@ SCALE ?= full
 SEED  ?= 20260723
 OUT   ?= data/raw
 
-.PHONY: help sync fmt lint test check generate catalog clean
+# `--env-file .env` is passed only when .env exists (compose errors on a
+# missing file); without it the compose file's ${VAR:-default} values apply.
+COMPOSE = docker compose -f infra/docker-compose.yml $(if $(wildcard .env),--env-file .env)
+PGUSER ?= intus
+PGDB   ?= intus
+
+.PHONY: help sync fmt lint test check generate catalog clean \
+        up down psql db-status db-clean migrate load warehouse
 
 # Two traps here, both of which have bitten on the sibling project:
 #  -h        MAKEFILE_LIST is "Makefile .env" (from -include above), and grep
@@ -27,13 +34,14 @@ sync: ## install/refresh the workspace virtualenv from uv.lock
 	uv sync
 
 fmt: ## format all Python in place
-	cd gen && uv run ruff format .
+	uv run ruff format gen warehouse
 
 lint: ## ruff format check + lint (what CI runs)
-	cd gen && uv run ruff format --check . && uv run ruff check .
+	uv run ruff format --check gen warehouse && uv run ruff check gen warehouse
 
-test: ## run the test suite
+test: ## run every test suite
 	cd gen && uv run pytest
+	cd warehouse && uv run pytest
 
 check: lint test ## lint and test — the pre-commit gate
 
@@ -45,3 +53,30 @@ catalog: ## regenerate the sensitivity catalog (docs/data-catalog.md) from the s
 
 clean: ## remove generated data
 	rm -rf $(OUT)
+
+# --------------------------------------------------------------------------
+# Legacy warehouse (Postgres in Docker, port 5433)
+# --------------------------------------------------------------------------
+
+up: ## start Postgres and wait until it accepts connections
+	$(COMPOSE) up -d --wait
+
+down: ## stop Postgres, keeping its data volume
+	$(COMPOSE) down
+
+psql: ## open a psql shell in the container
+	$(COMPOSE) exec postgres psql -U $(PGUSER) -d $(PGDB)
+
+db-status: ## show connection and migration state
+	cd warehouse && uv run intus-wh status
+
+db-clean: ## stop Postgres AND delete its data volume
+	$(COMPOSE) down -v
+
+migrate: ## apply pending SQL migrations
+	cd warehouse && uv run intus-wh migrate
+
+load: ## truncate and reload staging from data/raw
+	cd warehouse && uv run intus-wh load --from ../$(OUT)
+
+warehouse: up migrate load ## full local rebuild: start, migrate, load

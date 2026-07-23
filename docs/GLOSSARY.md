@@ -55,3 +55,26 @@ Terms used in this project, expanded on first use in the docs and kept here.
   governance and cost-allocation processes built around the approved ones.
 - **uv workspace** — a set of Python packages sharing one lockfile, so every member
   resolves identical dependency versions and a skew between them is unrepresentable.
+- **Staging layer** — the schema raw extracts land in before any transformation: here
+  every column is `text` with no constraints, so a malformed value is rejected by the
+  transform with a business reason rather than by the loader with a parse error.
+- **Star schema** — the dimensional modelling pattern: a central *fact* table of
+  measurements joined to surrounding *dimension* tables of descriptive attributes.
+- **Fact / dimension** — facts are the things you measure (an invoice, a day's usage);
+  dimensions are the things you slice by (employee, account, product, date).
+- **COPY** — Postgres's bulk load statement, streaming a whole file server-side in one
+  statement instead of one round trip per row.
+- **Truncate-and-reload** — replacing a table's contents wholesale each run, rather than
+  merging changes into it. Makes a rerun idempotent by construction.
+- **Transactional DDL** — Postgres allows schema changes inside a transaction, so a
+  migration that fails partway leaves nothing behind. Not all engines do this.
+- **Savepoint** — a nested, partial rollback point *within* a transaction. Rolling back
+  to one undoes work since the savepoint but does not commit anything, which is why code
+  that assumes a savepoint is a transaction silently loses durability.
+- **Migration checksum** — a hash of a migration file recorded when it is applied, so
+  that editing an already-applied migration is detected instead of quietly leaving the
+  schema and the file that claims to have built it out of step.
+- **Forward-only migrations** — no `down` scripts; a mistake is corrected by writing a
+  new migration rather than reversing an old one.
+- **Load audit** — a durable record of what was loaded, from which file, with which
+  content hash, so the provenance of the data currently in the warehouse is answerable.
