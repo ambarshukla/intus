@@ -1,0 +1,9 @@
+# Normalise line endings: LF in the repository regardless of OS, so diffs
+# never churn on CRLF/LF differences between Windows and Linux (CI, Docker).
+* text=auto eol=lf
+*.png binary
+*.pdf binary
+*.pbix binary
+
+# Windows batch files must stay CRLF — cmd.exe mis-parses LF-only labels.
+*.cmd text eol=crlf
