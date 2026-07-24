@@ -103,6 +103,8 @@ version = "0.1.0"
 source = { editable = "lakehouse" }
 dependencies = [
     { name = "intus-gen" },
+    { name = "intus-warehouse" },
+    { name = "psycopg", extra = ["binary"] },
 ]
 
 [package.dev-dependencies]
@@ -112,7 +114,11 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "intus-gen", editable = "gen" }]
+requires-dist = [
+    { name = "intus-gen", editable = "gen" },
+    { name = "intus-warehouse", editable = "warehouse" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+]
 
 [package.metadata.requires-dev]
 dev = [

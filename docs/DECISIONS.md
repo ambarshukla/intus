@@ -503,3 +503,113 @@ one more small, deliberate divergence from the Postgres schema, alongside D-024,
 driven by the same underlying fact: guarantees Postgres gets from the database itself
 have to be re-derived from what Delta actually provides, not assumed to transfer across
 unchanged.
+
+## D-026 — Gold ports the seven reporting views verbatim where possible, with two dialect failures found only by running them (2026-07-25)
+
+**Decision.** `lakehouse/sql/30_gold_views.sql` ports every `reporting.*` view to
+`intus.gold.*`, same names, same persona mapping, same window-function technique per
+view (D-020). Most of the port is line-for-line; two views needed a genuine rewrite,
+discovered by executing every statement live against the workspace, not by reading the
+SQL and guessing.
+
+**Alternatives considered, and why they failed on contact with the real optimiser.**
+(a) `rpt_revenue_trend`'s correlated scalar subqueries
+(`(SELECT date_key FROM dim_date WHERE full_date = month_ends.month_end)`) ported
+unchanged first — rejected by the platform outright
+(`UNSUPPORTED_SUBQUERY_EXPRESSION_CATEGORY.MUST_AGGREGATE_CORRELATED_SCALAR_SUBQUERY`).
+Postgres trusts the planner to prove at runtime that at most one row matches; Databricks'
+optimiser requires syntactic proof — an aggregate — and a bare equality predicate does
+not qualify even though `full_date` is genuinely unique. Fixed by joining `dim_date` a
+second time to resolve `month_end`'s own `date_key`, sidestepping the restriction rather
+than working around it with a pointless `MIN()`. (b) `dim_employee`'s and
+`dim_account`'s MERGE change-detection, `(target.col1, target.col2, ...) IS DISTINCT
+FROM (source.col1, ...)`, ported unchanged from `21_silver_dimensions.sql` — failed
+building `intus.gold.*` from a freshly reconciled extract with
+`DATATYPE_MISMATCH.CAST_WITHOUT_SUGGESTION`, Spark unable to unify the two sides'
+struct types. Isolated by elimination across the three tuple comparisons in that file:
+`dim_department`'s two-column comparison (no `NOT NULL` `BOOLEAN` column involved) never
+fails; `dim_employee` (`is_current BOOLEAN NOT NULL`, plus `COMMENT ON COLUMN` on two of
+its compared columns) and `dim_account` (`is_active BOOLEAN NOT NULL`) both fail the same
+way. A `NOT NULL` `BOOLEAN` column specifically defeats Spark's implicit struct-cast
+during row-value comparison here; Postgres's row-value `IS DISTINCT FROM` has no such
+sensitivity. Fixed by rewriting both as an OR-chain of scalar `IS DISTINCT FROM`
+comparisons, which constructs no struct at all.
+
+**Consequences.** `21_silver_dimensions.sql` no longer matches `warehouse/transform/`'s
+row-value-tuple idiom exactly for these two MERGEs — a real, documented divergence, not
+an oversight, and the reason it surfaced now rather than in Phase 3b is that Phase 3b's
+own live verification happened to run against data that didn't provoke it (the failure
+depends on which specific columns are being compared, not merely on running the file at
+all). Every gold view was then verified twice: once for "does it execute" (all seven,
+row counts sane) and once for real numeric parity — see D-027.
+
+## D-027 — Parity checked by comparing full row sets from a shared extract, not by inspection (2026-07-25)
+
+**Decision.** `intus-lakehouse parity` fetches every row of all seven `intus.gold.*`
+views and all seven `reporting.*` views, normalises types (`Decimal`/`DOUBLE` both to
+`float`; dates to ISO strings), sorts each side independently on the full row tuple (not
+either view's own `ORDER BY`), and compares column names, row counts, and every cell
+within a small absolute tolerance (`0.01`) for floating-point rounding noise. Both
+sources are read directly: `warehouse_source.py` over psycopg (typed Python values for
+free), `databricks_source.py` over the SQL Statement Execution API (values arrive as
+strings against a typed manifest — same converter pattern as parvum's
+`parvum_export.gold_source`, reused rather than re-invented).
+
+**Reconciling the two systems onto one shared extract, the design work the project brief
+flagged as this phase's own to do.** Before this phase, the Postgres warehouse and the
+Databricks lakehouse held data from different generator runs (different seed, different
+scale) — parity against different inputs proves nothing. Fixed by generating one fresh
+extract (`SCALE=small SEED=20260724`), rebuilding the Postgres warehouse from it
+end-to-end (`migrate`, `load`, `build`), landing the identical CSVs to
+`intus.landing.raw`, and rebuilding bronze → silver → gold from that same landing.
+Rebuilding lakehouse-side could not go through the bundle job — `git_source` checks out
+`main`, which does not yet have `30_gold_views.sql` or the new `gold` task (the
+parvum-learned rule, carried forward again). Every statement instead ran directly against
+the SQL Statement Execution API, the same mechanism Phase 3a/3b's live verification used.
+
+**A session-persistence gap discovered along the way.** `21_silver_dimensions.sql` and
+`22_silver_facts.sql` build on `CREATE OR REPLACE TEMPORARY VIEW`s across many
+statements in the same file — but each call to `/api/2.0/sql/statements` is its own
+ephemeral session by default; confirmed live that a temp view created by one call is
+gone by the next. `databricks-sql-connector` (a real persistent connection) was the
+obvious fix and was rejected on contact with this machine: it depends on `pandas`, and
+`pandas._libs.internals`' compiled extension is blocked by the same Application Control
+policy documented in CLAUDE.md, this time against a wheel-installed binary rather than an
+interpreter's own DLL — a second, distinct trigger for the same class of block.
+`/api/2.0/sql/sessions` (create once, pass `session_id` on every subsequent
+`/api/2.0/sql/statements` call) turned out to be the REST-native answer, confirmed live
+with a minimal temp-view-then-select probe before trusting it for the real rebuild — the
+mechanism this phase's earlier BUILD_LOG entry for Phase 3b called "session by session"
+without naming.
+
+**A real bug the parity check caught that neither platform's own execution would ever
+surface.** `rpt_sales_pipeline_by_rep`'s running total,
+`SUM(...) OVER (PARTITION BY owner_employee_key ORDER BY created_date ROWS UNBOUNDED
+PRECEDING)`, ties on `created_date` whenever a rep has two opportunities from the same
+day — and unlike `RANK()` (well-defined tie semantics, already tested), a running
+`SUM()`'s intermediate value for each tied row genuinely depends on the order tied rows
+are summed in, which Postgres and Databricks resolved differently for the same input.
+Each rep's *final* total matched on both platforms (order-independent), so nothing about
+either view looked wrong until parity compared row-for-row. This is a bug in the
+*original* Postgres view (005, already merged and applied), not a lakehouse-porting
+error, so migrations' immutability (D-008) applies: fixed by a new migration
+(`006_pipeline_tiebreak.sql`) adding `opportunity_id` as an explicit secondary sort key
+in both the window and the display `ORDER BY`, ported identically into
+`30_gold_views.sql`. See BUILD_LOG for the before/after parity output.
+
+**Alternatives considered for the comparison itself.** (a) Comparing aggregate
+checksums (row count + a hash of all values) per view — rejected: a mismatch would say
+*that* two views disagree, not *which* row or column, which is far less useful for
+actually debugging a divergence, and the seven views here are small enough (≤~700 rows)
+that a full row-level diff costs nothing extra. (b) Trusting each view's own `ORDER BY`
+and comparing positionally — rejected once the tiebreak bug above was found this way:
+several views rank ties, which are not guaranteed to break the same way on both
+platforms, so position-based comparison would report false mismatches independent of any
+real one.
+
+**Consequences.** All seven views match exactly against the reconciled extract (`views
+matched: 7/7`), which is the load-bearing claim of this phase, not merely "the SQL
+compiles." `lakehouse/tests/test_parity.py` unit-tests the comparison core in isolation
+(tolerance, sort-independence, None handling) with no network or database access, so it
+runs in CI even though the live comparison itself cannot yet (no `DATABRICKS_HOST` /
+service-principal secret wired up — open item, unchanged from Phase 3a).

@@ -20,7 +20,7 @@ PGDB   ?= intus
 
 .PHONY: help sync fmt lint test check generate catalog clean \
         up down psql db-status db-clean migrate load build dq-score warehouse \
-        land deploy-job run-job
+        land deploy-job run-job parity
 
 # Two traps here, both of which have bitten on the sibling project:
 #  -h        MAKEFILE_LIST is "Makefile .env" (from -include above), and grep
@@ -108,3 +108,7 @@ deploy-job: ## deploy the Databricks bundle in databricks.yml (needs DATABRICKS_
 run-job: ## run the lakehouse build now (needs deploy-job to have run against a merged main)
 	@test -n "$(DATABRICKS_HOST)" || { echo "DATABRICKS_HOST not set — copy .env.example to .env and fill it in"; exit 1; }
 	databricks bundle run lakehouse_build
+
+parity: ## compare intus.gold.* against the legacy warehouse's reporting.* views (needs DATABRICKS_HOST + a live Postgres)
+	@test -n "$(DATABRICKS_HOST)" || { echo "DATABRICKS_HOST not set — copy .env.example to .env and fill it in"; exit 1; }
+	cd lakehouse && uv run intus-lakehouse parity
