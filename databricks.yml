@@ -34,8 +34,9 @@ resources:
         the CSVs uploaded to the Unity Catalog volume `intus.landing.raw` as
         untyped Delta tables, one per dataset — the same role
         warehouse/sql/002_staging.sql plays for the legacy Postgres
-        warehouse, one SQL dialect over. Silver (dimensions and facts) and
-        gold (reporting views) land here as later phases add them.
+        warehouse, one SQL dialect over. Silver (dimensions and facts)
+        conforms them into a star schema; gold ports the seven
+        `reporting.*` views persona-for-persona.
 
       # Same rationale as parvum's git_source: main is protected and
       # CI-gated, so "the job runs main" already has a review gate in front
@@ -78,6 +79,15 @@ resources:
             warehouse_id: ${var.warehouse_id}
             file:
               path: lakehouse/sql/22_silver_facts.sql
+              source: GIT
+
+        - task_key: gold
+          depends_on:
+            - task_key: silver_facts
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: lakehouse/sql/30_gold_views.sql
               source: GIT
 
 # One target, one live environment — same reasoning as parvum (D-007 there):

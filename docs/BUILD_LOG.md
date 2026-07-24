@@ -2,6 +2,93 @@
 
 Newest first. One entry per merged change; what was built and what was learned.
 
+## 2026-07-25 — Phase 3c: the lakehouse gold layer, and proven parity
+
+The load-bearing deliverable of the whole migration arc: not "the lakehouse looks
+right" but "the lakehouse reproduces the legacy warehouse's numbers," checked
+row-for-row rather than asserted. Two pieces — `lakehouse/sql/30_gold_views.sql` (the
+seven `reporting.*` views ported to `intus.gold.*`) and `intus-lakehouse parity` (the
+comparison tool) — plus a fair amount of live-discovered dialect and design work neither
+piece would have surfaced without actually running them.
+
+**Gold ported mostly verbatim; two views needed a genuine rewrite, found only by
+executing every statement live.** `rpt_revenue_trend`'s correlated scalar subqueries,
+fine in Postgres, are rejected outright by Databricks'
+optimiser (`MUST_AGGREGATE_CORRELATED_SCALAR_SUBQUERY`) — it requires syntactic proof
+that a correlated subquery returns at most one row, and a bare equality predicate
+doesn't count even though the column is genuinely unique. Fixed by joining `dim_date` a
+second time instead of correlating. The bigger find: `dim_employee`'s and
+`dim_account`'s MERGE change-detection in `21_silver_dimensions.sql` — a tuple/struct
+`IS DISTINCT FROM`, the same shape `dim_department`'s MERGE already used successfully —
+broke while rebuilding gold from a freshly reconciled extract
+(`DATATYPE_MISMATCH.CAST_WITHOUT_SUGGESTION`, Spark unable to unify the two sides'
+struct types). Isolated by elimination: the common factor across the two failing MERGEs
+and the one that doesn't is a `NOT NULL BOOLEAN` column in the comparison
+(`is_current`, `is_active`) — Postgres's row-value comparison has no such sensitivity.
+Fixed by rewriting both as an OR-chain of scalar comparisons. Full alternatives and
+reasoning in D-026.
+
+**Reconciling the two platforms onto one shared extract — this phase's own flagged
+design work.** Before now, Postgres and Databricks held data from different generator
+runs; parity against different inputs proves nothing. Generated one fresh extract
+(`SCALE=small SEED=20260724`), rebuilt the Postgres warehouse from it end to end, landed
+the identical CSVs, and rebuilt bronze → silver → gold on Databricks from that same
+landing — directly against the SQL Statement Execution API rather than the bundle job,
+since `git_source` checks out `main` and neither `30_gold_views.sql` nor the new `gold`
+task exist there yet (the parvum-learned rule, exercised again, correctly).
+
+**A session-persistence gap, and a dead end before the real fix.** Silver's temp views
+need to persist across many statements in one file; each `/api/2.0/sql/statements` call
+is its own ephemeral session by default, confirmed live (a temp view from one call is
+gone by the next). `databricks-sql-connector`, the obvious real-connection fix, was
+installed and immediately hit the *same* Application Control policy CLAUDE.md already
+documents against `uv`-managed interpreters — this time blocking `pandas`'s compiled
+extension inside a pip-installed wheel, a second and distinct trigger for the same class
+of block. `/api/2.0/sql/sessions` turned out to be the REST-native answer: create a
+session once, pass its `session_id` on every later statement call, confirmed with a
+minimal temp-view-then-select probe before trusting it for the real rebuild. This is
+almost certainly what Phase 3b's own entry meant by "session by session" without naming
+the mechanism.
+
+**A real bug, in the *original* Postgres view, caught only by comparing rows, not by
+reading SQL or watching either platform run without error.**
+`rpt_sales_pipeline_by_rep`'s running total ties on `created_date` whenever a rep has two
+opportunities the same day, and unlike `RANK()` (well-defined tie semantics), a running
+`SUM()`'s intermediate value for each tied row genuinely depends on summing order —
+which Postgres and Databricks resolved differently for identical input. Each rep's final
+total matched on both platforms regardless, which is exactly why nothing looked wrong
+until the parity tool compared row-for-row:
+
+```
+rpt_sales_pipeline_by_rep        MISMATCH  warehouse=  131  gold=  131
+    warehouse: ('E00072', ..., 'OPP000146', ..., 688000.0, 688000.0, 121)
+    gold:      ('E00072', ..., 'OPP000146', ..., 566000.0, 688000.0, 121)
+```
+
+Fixed with a new migration (`warehouse/sql/006_pipeline_tiebreak.sql` — 005 is already
+applied and immutable per D-008) adding `opportunity_id` as an explicit secondary sort
+key, ported identically into `30_gold_views.sql`. Rerunning parity after the fix:
+
+```
+  views matched: 7/7
+```
+
+All seven views now match exactly — row counts and every cell — against the reconciled
+extract. Full design reasoning, alternatives, and the tolerance/normalisation approach
+in D-027.
+
+`lakehouse/tests/test_gold_schema.py` adds the fifth use of the D-010 drift-check
+pattern: gold's view *output columns* (parsed from each view's final `SELECT`, since a
+view has no `CREATE TABLE`-style column list to read the way bronze/silver's DDL does)
+against the Postgres reporting views', plus a second RESTRICTED-tier boundary check
+mirroring `warehouse/tests/test_reporting_views.py`'s. `lakehouse/tests/test_parity.py`
+unit-tests the comparison core (tolerance, sort-independence, type normalisation) with
+no network or database access, so it runs in CI even though the live comparison itself
+cannot yet — `DATABRICKS_HOST` and a service-principal token as CI secrets remain open
+(unchanged from Phase 3a).
+
+227 tests green (110 gen + 95 warehouse + 22 lakehouse).
+
 ## 2026-07-23 — Phase 3b: the lakehouse silver layer
 
 Ports every dimension and fact transform from `warehouse/transform/` (5 dimensions, 10

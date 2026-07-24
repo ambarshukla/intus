@@ -1,8 +1,9 @@
 # The Databricks lakehouse: bronze/silver/gold SQL run by a git_source job
 # (see ../databricks.yml), plus the thin Python that keeps the SQL honest —
-# schema-drift checks against the generators' registry now, parity checks
-# against the legacy warehouse as later phases add silver and gold. The SQL
-# itself, not this package, is the artefact this phase exists to demonstrate.
+# schema-drift checks against the generators' registry, and `intus-lakehouse
+# parity` comparing intus.gold.* against the legacy warehouse's reporting.*
+# views row-for-row. The SQL itself, not this package, is the artefact this
+# phase exists to demonstrate.
 
 [project]
 name = "intus-lakehouse"
@@ -14,16 +15,24 @@ dependencies = [
     # to assert that hand-written SQL (here, the bronze read_files() schemas)
     # has not drifted from the schemas that produce the extracts.
     "intus-gen",
+    # The parity CLI's Postgres half: reads reporting.* over psycopg, reusing
+    # intus_warehouse.db's DSN convention rather than re-deriving it.
+    "intus-warehouse",
+    "psycopg[binary]>=3.2",
 ]
 
 [tool.uv.sources]
 intus-gen = { workspace = true }
+intus-warehouse = { workspace = true }
 
 [dependency-groups]
 dev = [
     "pytest>=8",
     "ruff>=0.5",
 ]
+
+[project.scripts]
+intus-lakehouse = "intus_lakehouse.cli:main"
 
 [build-system]
 requires = ["hatchling"]

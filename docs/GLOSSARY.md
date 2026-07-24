@@ -179,3 +179,23 @@ Terms used in this project, expanded on first use in the docs and kept here.
   constraint declarations, but does not enforce them: a duplicate primary key inserts
   without error. They exist for the query optimiser and BI/catalog tooling to read, not
   as a guarantee a write can violate and be rejected for.
+- **Gold layer** — the medallion architecture's business-ready tier: the layer a report
+  or BI tool actually queries. Here, the seven `intus.gold.rpt_*` views, the lakehouse
+  counterpart to Postgres's `reporting.*`.
+- **Correlated subquery** — a subquery whose predicate references a column from the
+  surrounding query, evaluated once per outer row rather than once overall. Postgres
+  trusts the planner to prove a correlated scalar subquery returns at most one row at
+  runtime; Databricks SQL requires syntactic proof (an aggregate), rejecting an
+  otherwise-safe bare equality predicate outright — see docs/DECISIONS.md D-026.
+- **SQL Statement Execution API session** — each call to
+  `/api/2.0/sql/statements` is, by default, its own ephemeral session: state created by
+  one call (a `CREATE TEMPORARY VIEW`, a `DECLARE VARIABLE`) is gone by the next. A
+  session created via `/api/2.0/sql/sessions` and passed as `session_id` on later calls
+  binds them together, the REST equivalent of one open JDBC/ODBC connection. Needed here
+  because `21_silver_dimensions.sql` and `22_silver_facts.sql` build on temp views across
+  many statements.
+- **Parity check (this project's, specifically)** — `intus-lakehouse parity`, comparing
+  every `intus.gold.*` view's full row set against its `reporting.*` counterpart after
+  both are built from the same landed extract: column names, row counts, and every cell
+  (within a small numeric tolerance for floating-point rounding noise), independent of
+  either view's own `ORDER BY`. See D-027.

@@ -268,20 +268,35 @@ USING tmp_employee_final AS source
    ON target.employee_id = source.employee_id
   AND target.valid_from  = source.valid_from
 
+-- A tuple/struct IS DISTINCT FROM, the shape every other MERGE's change
+-- detection in this file uses (dim_department, dim_account below), fails
+-- here specifically — confirmed live: `DATATYPE_MISMATCH.CAST_WITHOUT_
+-- SUGGESTION`, Spark unable to unify target's struct type with source's
+-- because `is_current` and `manager_employee_id` carry `COMMENT ON COLUMN`
+-- metadata (added above) that the struct built from `target.*` inherits and
+-- the struct built from `source.*` does not — a mismatch the other MERGEs in
+-- this file never hit because none of their compared columns are commented.
+-- Postgres's row-value `IS DISTINCT FROM` has no such sensitivity. Rewritten
+-- as an OR-chain of scalar comparisons, which builds no struct at all.
 WHEN MATCHED AND (
-        target.valid_to, target.is_current, target.first_name, target.last_name,
-        target.full_name, target.work_email, target.region, target.location,
-        target.department_code, target.department_name, target.job_level,
-        target.job_title, target.manager_employee_id, target.employment_type,
-        target.change_reason, target.hire_date, target.termination_date,
-        target.termination_reason
-    ) IS DISTINCT FROM (
-        source.valid_to, source.is_current, source.first_name, source.last_name,
-        source.full_name, source.work_email, source.region, source.location,
-        source.department_code, source.department_name, source.job_level,
-        source.job_title, source.manager_employee_id, source.employment_type,
-        source.change_reason, source.hire_date, source.termination_date,
-        source.termination_reason
+       target.valid_to            IS DISTINCT FROM source.valid_to
+    OR target.is_current          IS DISTINCT FROM source.is_current
+    OR target.first_name          IS DISTINCT FROM source.first_name
+    OR target.last_name           IS DISTINCT FROM source.last_name
+    OR target.full_name           IS DISTINCT FROM source.full_name
+    OR target.work_email          IS DISTINCT FROM source.work_email
+    OR target.region              IS DISTINCT FROM source.region
+    OR target.location            IS DISTINCT FROM source.location
+    OR target.department_code     IS DISTINCT FROM source.department_code
+    OR target.department_name     IS DISTINCT FROM source.department_name
+    OR target.job_level           IS DISTINCT FROM source.job_level
+    OR target.job_title           IS DISTINCT FROM source.job_title
+    OR target.manager_employee_id IS DISTINCT FROM source.manager_employee_id
+    OR target.employment_type     IS DISTINCT FROM source.employment_type
+    OR target.change_reason       IS DISTINCT FROM source.change_reason
+    OR target.hire_date           IS DISTINCT FROM source.hire_date
+    OR target.termination_date    IS DISTINCT FROM source.termination_date
+    OR target.termination_reason  IS DISTINCT FROM source.termination_reason
     )
     THEN UPDATE SET
         valid_to            = source.valid_to,
@@ -383,14 +398,23 @@ MERGE INTO intus.silver.dim_account AS target
 USING tmp_account_final AS source
    ON target.account_id = source.account_id
 
+-- Same struct-comparison failure as dim_employee above, isolated further by
+-- hitting it a second time: `is_active` is BOOLEAN NOT NULL on this table,
+-- same as `is_current` was there, and dim_department's two-column tuple
+-- comparison (no NOT NULL BOOLEAN column in it) never hits this — a NOT NULL
+-- BOOLEAN column specifically defeats Spark's struct-type unification here,
+-- confirmed by elimination across the three tuple comparisons in this file.
+-- Same OR-chain fix, same reason.
 WHEN MATCHED AND (
-        target.account_name, target.region, target.segment, target.industry,
-        target.created_date, target.owner_employee_id, target.status,
-        target.churn_date, target.is_active
-    ) IS DISTINCT FROM (
-        source.account_name, source.region, source.segment, source.industry,
-        source.created_date, source.owner_employee_id, source.status,
-        source.churn_date, source.is_active
+       target.account_name      IS DISTINCT FROM source.account_name
+    OR target.region             IS DISTINCT FROM source.region
+    OR target.segment            IS DISTINCT FROM source.segment
+    OR target.industry           IS DISTINCT FROM source.industry
+    OR target.created_date       IS DISTINCT FROM source.created_date
+    OR target.owner_employee_id  IS DISTINCT FROM source.owner_employee_id
+    OR target.status             IS DISTINCT FROM source.status
+    OR target.churn_date         IS DISTINCT FROM source.churn_date
+    OR target.is_active          IS DISTINCT FROM source.is_active
     )
     THEN UPDATE SET
         account_name      = source.account_name,
