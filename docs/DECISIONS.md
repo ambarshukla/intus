@@ -613,3 +613,194 @@ compiles." `lakehouse/tests/test_parity.py` unit-tests the comparison core in is
 (tolerance, sort-independence, None handling) with no network or database access, so it
 runs in CI even though the live comparison itself cannot yet (no `DATABRICKS_HOST` /
 service-principal secret wired up — open item, unchanged from Phase 3a).
+
+## D-029 — Governance: two independent axes, and GRANT vs. row filter chosen per tier's actual shape (2026-07-26)
+
+**Decision.** `lakehouse/sql/40_governance_schema.sql` / `41_governance_apply.sql`
+track row-level scope (`department_scope`) and column-level capability
+(`capability_grant`) as two separate tables, never one combined permission
+check. Every RESTRICTED-tier column the generator declares
+(`Dataset.columns_at(Tier.RESTRICTED)`) is masked; CONFIDENTIAL-tier tables get
+either a GRANT (CRM: `crm_account`/`crm_opportunity`/`crm_subscription`/
+`crm_invoice`, every row already owned by one business function, nothing to
+filter within the table) or a department-scoped row filter plus a GRANT
+(`fin_actual`/`fin_budget`: rows genuinely span every department in one table).
+
+**Alternatives considered.** (a) One combined grant per persona ("can see this
+table" implies "can see everything in it") — rejected because it cannot express
+the real case this project's own data demands: a department manager should see
+that a compensation row exists (who, when, what changed) without seeing the
+amount, which is exactly what a SOX-style access review checks for — over-broad
+grants that quietly bundle visibility with disclosure. (b) A row filter
+everywhere CONFIDENTIAL data lives, for uniformity — rejected for the CRM
+tables specifically: a row filter needs something to differentiate rows *on*,
+and every `crm_*` row already belongs to Sales Operations alone, so a filter
+there would either always return everything (pointless) or require inventing a
+row-level distinction the data doesn't have. The classification's own wording
+("restricted to a business function") is a whole-table statement for those
+tables and a per-row one for finance's; the mechanism follows which is actually
+true of the data, not a single default applied uniformly.
+
+**Consequences.** Getting compensation's amount unmasked (Total Rewards) and
+getting compensation's *rows* visible (a department scope) are independently
+grantable and were verified independently, live: a persona with only the row
+scope sees rows with every RESTRICTED value NULL; a persona with only the
+capability (and a company-wide row scope) sees real values company-wide. Seven
+persona groups exist as a result (`grp_exec`, `grp_hr_analyst`,
+`grp_total_rewards`, `grp_security`, `grp_fp_a`, `grp_sales_ops`,
+`grp_dept_manager_engineering`), not the five named personas in the target
+posting/reporting views alone — Total Rewards and a narrow department-manager
+persona were added specifically because they are the two personas that prove
+the row/column independence actually holds, not personas the reporting views
+themselves needed.
+
+## D-030 — A row filter's own parameter name can silently defeat it (2026-07-26)
+
+**Decision.** Every governance function parameter is prefixed `p_`
+(`p_department_key`, `p_employee_key`, ...), unconditionally, even where it
+reads awkwardly.
+
+**What this fixes, found live.** An early draft of the department row filter
+took a parameter named `dept` and queried a lookup table whose own column was
+also named `dept`: `... WHERE s.dept = dept AND is_account_group_member(...)`.
+This creates no error and no warning. Databricks resolves the unqualified
+`dept` inside the subquery to the *table* column already in scope there, not
+the outer function parameter — so the predicate silently became
+`s.dept = s.dept`, which is true for every existing row regardless of which
+department was actually asked about. Confirmed by direct comparison: calling
+the function for a department with no matching scope row still returned
+`true`. This is about as bad as a row-filter bug can be — not a crash, not a
+wrong-looking result, just *quietly permits everything* — and would have
+shipped invisibly if the function's return value hadn't been spot-checked
+against a department deliberately chosen to have no grant.
+
+**Alternatives considered.** Qualifying every reference inside the function
+body instead of renaming parameters — rejected as relying on remembering to do
+it correctly every time a function is written, the same category of mistake
+that caused the bug in the first place. A naming convention that makes the
+collision syntactically impossible (a parameter can never coincidentally share
+a name with a column when it carries a prefix no column in this project ever
+would) fails safe by construction instead of by discipline.
+
+**Consequences.** No other governance function in this project can suffer the
+same silent-permit failure mode, verified by construction rather than by
+auditing each one by hand. Worth carrying forward as a house rule for any
+future row filter or mask function, on this platform or any other: name
+parameters so they cannot collide with a column name in any table the function
+might ever query, not just the ones it queries today.
+
+## D-031 — dim_employee's CHECK constraint traded for governance (2026-07-26)
+
+**Decision.** `20_silver_schema.sql`'s `ck_dim_employee_span` CHECK constraint
+(`valid_to IS NULL OR valid_to > valid_from`, added in Phase 3b) is dropped.
+`dim_employee` now carries column masks (`termination_reason`, `job_level`)
+instead.
+
+**What forced this, found live.** Attempting to attach either a row filter or
+a column mask to `dim_employee` while the CHECK constraint was still in place
+failed outright:
+`ROW_LEVEL_SECURITY_FEATURE_NOT_SUPPORTED.CHECK_CONSTRAINT` /
+`COLUMN_MASKS_FEATURE_NOT_SUPPORTED.CHECK_CONSTRAINT` — Unity Catalog refuses
+*either* governance feature on a table that has *any* CHECK constraint, not
+just one that conflicts with the specific filter or mask being added. There is
+no partial option here: keep the constraint and get no governance on this
+table, or drop it and get both.
+
+**Alternatives considered.** (a) Keep the constraint, enforce masking via a
+governed VIEW over `dim_employee` instead of the table itself — rejected: a
+view-level control is bypassable by anyone with direct table access, which is
+a materially weaker guarantee than an engine-level mask that applies no matter
+how the table is queried, and this project has already chosen "reproduce the
+real control, not a workaround" every other time a platform limitation showed
+up (D-024, D-026). (b) Drop the row filter idea for `dim_employee` entirely but
+keep the constraint — rejected once it became clear the actually RESTRICTED
+columns here (`termination_reason`, `job_level`) needed masks specifically,
+not a filter on which employees are visible at all; a company directory
+(name, department, title) being broadly visible is also the more realistic
+default, so this wasn't a real loss.
+
+**Consequences.** The guarantee `ck_dim_employee_span` gave — no SCD2 span can
+be reversed — moves entirely to the transform, the same posture D-024 already
+settled on for the harder no-overlap invariant on this identical table. The
+risk this accepts is small: the generator's own anniversary-loop bug that could
+have produced a zero-length span was already found and fixed at the source
+(Phase 1, `world.py`'s `>=` fix), and `HR_OVERLAPPING_SPAN`'s self-join already
+re-derives span validity independently of any database constraint. Losing a
+redundant last-line-of-defense to gain a real, engine-enforced access control
+is the trade worth making here.
+
+## D-032 — A governance-owned identity mapping table, to avoid nested policies (2026-07-26)
+
+**Decision.** `intus.governance.employee_department` — a plain
+`(employee_key, department_key)` table, refreshed from `dim_employee`/
+`dim_department` every run — exists specifically so `fact_compensation`'s and
+`fact_performance_review`'s row filters never query `dim_employee` directly.
+
+**What forced this, found live.** `rf_department_by_employee`'s first draft
+joined `dim_employee` directly to resolve an employee's department. Attaching
+it to `fact_compensation` (after `dim_employee` already had column masks
+attached, D-031) failed:
+`UNSUPPORTED_NESTED_ROW_OR_COLUMN_ACCESS_POLICY` — Unity Catalog refuses to let
+one table's row filter or mask function scan *another* table that itself
+carries a row filter or column mask, even when the function only touches
+unrelated, unmasked columns (`department_name`, not `termination_reason`).
+The restriction is table-level, not column-level.
+
+**Alternatives considered.** Removing `dim_employee`'s masks so the lookup
+would be unrestricted — rejected outright, that gives up the actual point of
+D-031. Duplicating the department lookup inline in every function that needs
+it — rejected as the same restriction would just resurface the moment
+`dim_employee` (or whatever it's joined to) carries any policy of its own,
+which is exactly the situation this is in.
+
+**Consequences.** This is the real-world shape of a problem worth naming for
+what it is: entitlement/authorization lookups belong in tables the
+authorization system owns, not in the governed data itself — separating "what
+the data says" from "who gets to see what" all the way down, not just at the
+level of `department_scope`/`capability_grant` (D-029) but at the level of
+which tables a policy function is even allowed to touch. Real enterprise IAM
+systems maintain exactly this kind of denormalised identity/scope table for
+this reason; this wasn't an available option so much as the platform enforcing
+the same lesson.
+
+## D-033 — Group-membership changes are not immediately visible to a running warehouse (2026-07-26)
+
+**Decision.** No change to the SQL — this is an operational finding about the
+platform, recorded because it directly affects how any access-review evidence
+built on this governance layer should be read.
+
+**What was found, live.** Creating a new Databricks account-level group (via
+`/api/2.0/account/scim/v2/Groups`) and adding the session's own user as a
+member did not make `is_account_group_member('<new group>')` return `true`
+immediately — it returned `false` for roughly ten to fifteen minutes of real
+wall-clock time before flipping to `true`, with no error or warning in between
+to distinguish "not a member" from "membership not yet visible here." A
+years-old group (`account users`) resolved correctly the entire time, ruling
+out a fundamental incompatibility — this is a propagation delay, not a
+platform limitation. Restarting the SQL warehouse did not shorten it, which
+rules out a per-warehouse cache as the mechanism; the delay is closer to the
+identity provider's own directory-sync interval. **The same delay applies
+symmetrically to removal**: removing the test user from a group after
+verification did not immediately restore the pre-membership (default-deny)
+state either, confirmed live by querying immediately after the removal call
+returned success and still seeing the granted state.
+
+**Why this matters beyond this project.** GRANT-based access (whether a
+principal can query a table at all) resolved *instantly* against the same
+newly created groups — only the row-filter/mask policy functions
+(`is_account_group_member`) were subject to the delay. A real access-review or
+offboarding process built on this mechanism cannot assume a revoked group
+membership takes effect the moment the revocation call succeeds; "the API
+call returned 200" and "the control now reflects it" are different claims; an
+audit needs to check the *effective* state, not the *requested* state, and
+should allow for this lag rather than treat any observed gap as a control
+failure.
+
+**Consequences.** This project's own live verification (D-029's independent-axes
+proof) was paced around this finding rather than fighting it — group creation
+and membership changes were made early, other work continued while
+propagation happened, and the actual assertions were checked once membership
+had visibly taken effect (`is_account_group_member` returning `true`),
+recorded rather than assumed. `docs/ACCESS_REVIEW.md` and
+`docs/CHANGE_CONTROL.md` both cite this delay explicitly rather than silently
+assume synchronous enforcement.

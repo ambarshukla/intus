@@ -2,6 +2,111 @@
 
 Newest first. One entry per merged change; what was built and what was learned.
 
+## 2026-07-26 — Phase 4: governance — row filters, column masks, and persona GRANTs, live-verified
+
+The centerpiece phase: row-level security, column masking, and role-based
+access by persona, attached to the silver layer and inherited automatically
+by every gold view built on it (confirmed live before writing a line of the
+real design — a filter on a base table survives a `GROUP BY` aggregation on
+top of it). Governance is enforced exactly once, at silver; gold has nothing
+further to do.
+
+**The mandatory pre-design probe reversed the prediction.** Free Edition was
+expected to lack Unity Catalog row filters/column masks, based on the same
+tier gap that made catalog creation need a SQL workaround in Phase 3a. Live
+testing found the opposite: both features work natively, including
+`is_account_group_member()` for persona-style group checks, and — a genuinely
+useful platform property, verified before relying on it — a row filter
+attached to a base table is inherited through a downstream view even across
+an aggregation.
+
+**Two independent axes, not one combined grant.** `department_scope` (which
+rows) and `capability_grant` (whether a masked column's real value is
+visible) are tracked in separate tables specifically so "can see the row"
+never silently implies "can see everything in it" — a department manager
+sees that a compensation record exists without seeing the amount. Full
+reasoning and the GRANT-vs-row-filter split for CONFIDENTIAL-tier tables in
+D-029.
+
+**Three real platform constraints, found only by running the SQL against the
+live workspace, each one changing the design:**
+
+1. A row filter function's own parameter, named the same as a lookup table's
+   column, resolved to the table column instead of the parameter —
+   `s.dept = dept` silently became `s.dept = s.dept`, always true, no error.
+   The worst kind of RLS bug: not a crash, a silent "permit everything."
+   Fixed by prefixing every governance function parameter `p_`, unconditionally.
+   D-030.
+2. Unity Catalog refuses *either* a row filter or a column mask on a table
+   with *any* CHECK constraint. `dim_employee` had one from Phase 3b
+   (`ck_dim_employee_span`). Dropped it — the guarantee it gave moves to the
+   transform, the same posture D-024 already established for the harder
+   no-overlap invariant on this same table — and replaced the row-filter plan
+   for this table with masks on the two columns actually classified
+   RESTRICTED/CONFIDENTIAL there (`termination_reason`, `job_level`), which
+   is a better-targeted design than the blanket row hiding originally
+   planned. D-031.
+3. A row filter cannot scan a table that itself carries a row filter or
+   column mask, even for unrelated columns
+   (`UNSUPPORTED_NESTED_ROW_OR_COLUMN_ACCESS_POLICY`) — `fact_compensation`'s
+   filter needed an employee's department, and `dim_employee` (the obvious
+   place to look it up) now has masks. Fixed with a governance-owned
+   `employee_department` mapping table, refreshed every run, so
+   authorization checks never touch the governed data itself — the same
+   separation real entitlement systems maintain, here forced by the
+   platform rather than chosen upfront. D-032.
+
+**Full coverage, checked against the generator's own classification, not
+restated by hand.** `intus_gen/sensitivity.py`'s `Dataset.columns_at()`
+already said, in its own docstring, that every RESTRICTED column must be
+covered by a mask — a promise this phase completes literally, not
+approximately: all ten RESTRICTED columns across five datasets (compensation
+amounts, performance ratings, `dim_employee`'s termination reason and job
+level, security event source IP, and the requester-identity/policy-flag
+columns on both IT/security event logs) are masked. `test_governance_coverage
+.py` asserts this against `all_datasets()` directly — the seventh use of the
+D-010 drift-check pattern — so a future RESTRICTED column left unmasked fails
+CI instead of shipping quietly. CONFIDENTIAL-tier tables get GRANTs (D-029):
+a row filter where rows genuinely span every department (finance), a
+whole-table GRANT where they don't (CRM, entirely Sales-Operations-owned).
+
+**Live-verified end to end by toggling the session's own account's group
+membership** — the only real principal available on a single-user Free
+Edition workspace. Before joining any persona group: zero rows on every
+department-scoped fact table, NULL on every masked column (default-deny).
+After joining a deliberately narrow persona (`grp_dept_manager_engineering`,
+scoped to Engineering alone): rows restricted to Engineering, masked columns
+still NULL (no capability grant) — proof the row scope actually restricts
+something, not merely that the mechanism doesn't error. After also joining
+`grp_total_rewards` (company-wide scope, compensation capability): real
+compensation values, now company-wide (a principal's group scopes union),
+while performance ratings stayed masked (no HR capability) — proof the two
+axes compose correctly across personas held simultaneously.
+
+**A propagation-delay finding significant enough for its own decision entry
+and its own line in the SOX evidence docs.** Both granting and revoking group
+membership took roughly ten to fifteen minutes of real wall-clock time to
+take effect against `is_account_group_member()`, confirmed live in both
+directions — a newly created group and a just-removed membership both showed
+stale state for a real, non-trivial window, with no error to distinguish
+"not a member" from "not yet visible here." GRANT-based table access resolved
+instantly against the same groups; only the row-filter/mask policy check was
+delayed. D-033, and both `docs/ACCESS_REVIEW.md` and `docs/CHANGE_CONTROL.md`
+cite it directly — a real access-review process cannot treat "the API call
+succeeded" as "the control is now in effect."
+
+**New SOX-evidence docs, not just controls.** `docs/ACCESS_REVIEW.md` records
+the persona → access matrix and the live review actually performed against
+it this session (findings: none, expected for a layer reviewed the day it
+shipped); `docs/CHANGE_CONTROL.md` documents the PR-based mechanism this
+phase (and every phase before it) already used, made explicit because
+governance is where a reviewer is most likely to ask for it directly. Both
+name their own gaps rather than assume them away: no independent
+reviewer/approver (single-author repository), no emergency-change path.
+
+25 lakehouse tests green (22 + 3 new), 147 total across all three packages.
+ruff clean.
+
 ## 2026-07-25 — Phase 3c: the lakehouse gold layer, and proven parity
 
 The load-bearing deliverable of the whole migration arc: not "the lakehouse looks

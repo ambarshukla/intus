@@ -35,8 +35,11 @@ resources:
         untyped Delta tables, one per dataset — the same role
         warehouse/sql/002_staging.sql plays for the legacy Postgres
         warehouse, one SQL dialect over. Silver (dimensions and facts)
-        conforms them into a star schema; gold ports the seven
-        `reporting.*` views persona-for-persona.
+        conforms them into a star schema; governance attaches row filters
+        and column masks to silver's department-scoped and RESTRICTED-tier
+        tables; gold ports the seven `reporting.*` views persona-for-persona,
+        inheriting governance's row filters automatically since they attach
+        to the tables gold's views select from.
 
       # Same rationale as parvum's git_source: main is protected and
       # CI-gated, so "the job runs main" already has a review gate in front
@@ -81,9 +84,27 @@ resources:
               path: lakehouse/sql/22_silver_facts.sql
               source: GIT
 
-        - task_key: gold
+        - task_key: governance_schema
           depends_on:
             - task_key: silver_facts
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: lakehouse/sql/40_governance_schema.sql
+              source: GIT
+
+        - task_key: governance_apply
+          depends_on:
+            - task_key: governance_schema
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: lakehouse/sql/41_governance_apply.sql
+              source: GIT
+
+        - task_key: gold
+          depends_on:
+            - task_key: governance_apply
           sql_task:
             warehouse_id: ${var.warehouse_id}
             file:
