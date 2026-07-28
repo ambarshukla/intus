@@ -614,6 +614,38 @@ compiles." `lakehouse/tests/test_parity.py` unit-tests the comparison core in is
 runs in CI even though the live comparison itself cannot yet (no `DATABRICKS_HOST` /
 service-principal secret wired up — open item, unchanged from Phase 3a).
 
+## D-028 — Cutover strategy: phased-by-persona parallel run, not big-bang (2026-07-26)
+
+**Decision.** `docs/CUTOVER_PLAN.md` recommends migrating consumers off the legacy
+Postgres warehouse persona-by-persona (HR → AI governance → FP&A → sales ops →
+product/exec), each promoted independently once its own view clears a recurring
+parity gate (five consecutive scheduled `intus-lakehouse parity` matches, not one
+point-in-time check), rather than cutting every reporting view over in one event.
+
+**Alternatives considered.** (a) Big-bang cutover once Phase 3c's parity check
+passed — rejected because a one-time check proves the extract-at-hand reproduces
+correctly, not that the platforms keep agreeing under ongoing production load, and
+because it puts every persona's numbers at risk simultaneously for a dialect issue
+that might only affect one view (Phase 3c already found two dialect failures from a
+single execution; nothing suggests zero remain). (b) Parallel run with all seven
+views promoted together after one soak period — an improvement over big-bang
+(recurring checks instead of one) but still bundles unrelated failure domains: a
+problem specific to `rpt_ai_cost_by_department`'s floating-point aggregation would
+block HR's and FP&A's unrelated views from cutting over.
+
+**Consequences.** Rollback during the parallel-run window is free (flip the routing
+point back; Postgres was never decommissioned), which is the main argument for this
+shape over big-bang — a big-bang rollback either requires keeping Postgres warm and
+in sync anyway or reconstructing state mid-incident. The plan also surfaces
+infrastructure this project doesn't have yet as explicit prerequisites rather than
+assuming them away: a recurring build schedule on both platforms (both are
+manually triggered today), and the `DATABRICKS_HOST`/service-principal CI secret
+(open item since Phase 3a) is promoted from "nice to have" to "the mechanism the
+promotion gate depends on." The plan also makes cutover of any persona explicitly
+conditional on Phase 4's access-control parity (row filters/column masks matching
+across platforms, not just the numbers) — a migration that reproduces the right
+values behind the wrong access boundary is a governance gap, not a success.
+
 ## D-029 — Governance: two independent axes, and GRANT vs. row filter chosen per tier's actual shape (2026-07-26)
 
 **Decision.** `lakehouse/sql/40_governance_schema.sql` / `41_governance_apply.sql`

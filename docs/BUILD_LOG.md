@@ -2,6 +2,50 @@
 
 Newest first. One entry per merged change; what was built and what was learned.
 
+## 2026-07-26 — Phase 3d: the migration/cutover plan, and closing out Phase 3
+
+The last piece of the SQL→Databricks arc: `docs/CUTOVER_PLAN.md`, written as if
+Halcyon's seven reporting-view consumers were real production traffic, because a
+cutover plan is only worth writing that way — one drafted after the first real
+consumer exists is a much weaker artifact than one that has already thought through
+what that consumer will need.
+
+**Phased-by-persona parallel run, not big-bang.** Each persona's view(s) run on
+both platforms concurrently and promote independently once a *recurring* parity
+check (five consecutive scheduled `intus-lakehouse parity` matches, not the single
+point-in-time check Phase 3c already ran) clears. Sequenced lowest-risk-first: HR's
+two views (slowest-changing source data) first, sales ops' `rpt_sales_pipeline_by_rep`
+near-last since that's exactly the view Phase 3c's own tiebreak bug (D-027) lived in
+and deserves the longest soak time. Full alternatives-considered in D-028.
+
+**Rollback is free during the parallel-run window** — flip the routing point back,
+since Postgres is never decommissioned until all seven personas have promoted. This
+is the actual argument for phased-over-big-bang, not just "lower risk" in the
+abstract: a big-bang rollback would require either keeping Postgres warm and synced
+anyway (so it wasn't really a big-bang) or reconstructing state mid-incident.
+
+**Writing the plan honestly surfaced gaps this project doesn't actually have covered
+yet**, listed as explicit prerequisites rather than glossed over: neither platform
+runs on a recurring build schedule today (both are manually triggered); the
+`DATABRICKS_HOST`/service-principal CI secret (an open item since Phase 3a) turns
+out to be the literal mechanism the promotion gate in §4 depends on, not just a nice-
+to-have for CI; and no consumer-facing routing/aliasing layer exists yet to flip
+between platforms — scoped as a Phase 5 prerequisite once the BI semantic model is
+the first real consumer, rather than built speculatively now.
+
+**An explicit, stated dependency on Phase 4.** No persona is recommended for
+cutover until its source tables' row filters and column masks are proven equivalent
+on both platforms, not just its numbers — a migration that reproduces the right
+values behind a different access boundary is a governance gap in a SOX-adjacent
+design, and the plan treats catching that before cutover as strictly cheaper than
+after.
+
+This closes Phase 3 (bronze → silver → gold → parity → cutover plan) in full.
+Phase 4 — governance — is next, and per the brief must be probed live before it's
+designed: does this Databricks Free Edition workspace actually support Unity
+Catalog row filters and column masks, or does the design need a Postgres+Power BI
+fallback with the Unity Catalog shape documented as target state only.
+
 ## 2026-07-26 — Phase 4: governance — row filters, column masks, and persona GRANTs, live-verified
 
 The centerpiece phase: row-level security, column masking, and role-based

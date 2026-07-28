@@ -38,6 +38,16 @@ Terms used in this project, expanded on first use in the docs and kept here.
   employee's account still logging in" is a classic ITGC exception.
 - **Data steward** — the business function accountable for a dataset; the approver an
   access review routes to, recorded per dataset in the catalog.
+- **Parallel run** — running old and new systems side by side against the same live
+  data before cutover, so a migration is validated under ongoing production
+  conditions rather than a single point-in-time check.
+- **Promotion gate** — the stated, falsifiable set of conditions a component must
+  clear before its consumers are switched from the old platform to the new one
+  (here: N consecutive clean parity runs, no open dialect finding, access-control
+  parity, a rehearsed rollback).
+- **Blast radius** — how much breaks if a given change goes wrong; a design goal of
+  phased cutover is to keep each promotion's blast radius to one persona rather than
+  every consumer at once.
 - **Retention window** — how long a dataset keeps history. Security logs here retain 180
   days while every other domain keeps full history, as they do in practice.
 - **Run manifest** — the file written alongside generated data recording the inputs

@@ -60,13 +60,18 @@ totals (`SUM() OVER`), leaderboards (`RANK()`), a ratio-to-total, and relative s
 (`PERCENT_RANK()`). None expose restricted-tier data at individual grain — that
 boundary belongs to Phase 4 (row-level security and column masking), next.
 
-**Phase 3 in progress: migration to Databricks.** `lakehouse/` holds the bronze layer —
-Unity Catalog catalog `intus` (its own, isolated from the shared workspace's `parvum`
-schema), a landing volume, and `lakehouse/sql/10_bronze.sql`, which lands the same
-twelve extracts as untyped Delta tables via `read_files()`, the lakehouse's answer to
-`staging`. Verified end to end against the live workspace: every table's row count
-matches the generator's manifest exactly. Silver (dimensions and facts), gold
-(reporting views), and cross-platform parity checks are next.
+**Phase 3 complete: migration to Databricks.** `lakehouse/` holds the full medallion
+build — bronze (`lakehouse/sql/10_bronze.sql`, twelve extracts landed as untyped Delta
+tables via `read_files()`), silver (`20_silver_schema.sql`/`21_silver_dimensions.sql`/
+`22_silver_facts.sql`, the same five dimensions and ten facts as the Postgres
+warehouse, ported to Unity Catalog SQL), and gold (`30_gold_views.sql`, the same seven
+`reporting.*` views as `intus.gold.*`). **`intus-lakehouse parity`** compares every
+row of both platforms' views against one reconciled shared extract: **7/7 views match
+exactly.** Two genuine Databricks-dialect rewrites and one real bug in the *original*
+Postgres view (a non-deterministic tie in a running total) were found only by running
+the comparison, not by reading the SQL — see `docs/DECISIONS.md` D-026/D-027.
+`docs/CUTOVER_PLAN.md` closes the phase: a phased-by-persona parallel-run plan with a
+recurring parity gate, written as if the reporting views had real consumers already.
 
 **Phase 4 complete: governance.** `lakehouse/sql/40_governance_schema.sql` /
 `41_governance_apply.sql` attach Unity Catalog row filters and column masks directly to
