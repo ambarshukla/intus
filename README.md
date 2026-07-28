@@ -162,6 +162,25 @@ make run-job      # run the lakehouse build (needs deploy-job's changes merged t
 `DATABRICKS_HOST` (in `.env`) points every one of these at the right workspace; see
 `.env.example`.
 
+The Power BI exec dashboard: open `powerbi/intus_exec_dashboard.pbix` in
+[Power BI Desktop](https://www.microsoft.com/en-us/power-platform/products/power-bi/desktop)
+(free, Windows only). It's a live DirectQuery connection to `intus.gold.*`, so it
+needs a personal access token for this project's Databricks workspace to actually
+load data — `docs/POWERBI_MODEL.md` has the full connection spec, DAX measures, and
+RLS role definitions. The two screenshots below are Power BI Desktop's own **View As**
+feature applied to the same dashboard — no second login, no second workspace, just
+previewing the report as each role would see it:
+
+| Executive (no row filter) | Department Manager – Engineering (row-filtered) |
+|---|---|
+| ![Executive view: all departments visible](docs/screenshots/powerbi_view_as_executive.png) | ![Department Manager view: Engineering only](docs/screenshots/powerbi_view_as_dept_manager_engineering.png) |
+
+Headcount, attrition, budget variance, and AI cost all shrink to Engineering-only
+under the second role; revenue and open pipeline (neither has a department column)
+are identical in both — the same row-scope-vs-column-capability split
+`docs/DECISIONS.md` D-029 built into Unity Catalog, reproduced independently at the
+BI layer (D-034).
+
 ## Relationship to `parvum`
 
 [parvum](https://github.com/ambarshukla/parvum) is this project's sibling: a
