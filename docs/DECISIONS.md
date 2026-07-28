@@ -836,3 +836,52 @@ had visibly taken effect (`is_account_group_member` returning `true`),
 recorded rather than assumed. `docs/ACCESS_REVIEW.md` and
 `docs/CHANGE_CONTROL.md` both cite this delay explicitly rather than silently
 assume synchronous enforcement.
+
+## D-034 — Power BI connects via DirectQuery as a provisioned persona, not an unaccountable admin session (2026-07-28)
+
+**Decision.** The Power BI semantic model (`docs/POWERBI_MODEL.md`) connects to
+`intus.gold.*` over DirectQuery using a personal access token that belongs to
+`grp_exec` — a permanent grant, not a toggle-test the way earlier persona checks
+in D-029's live verification were. Row-level security inside Power BI itself
+(`Executive` / `Department Manager - Engineering` roles) mirrors the same two
+personas already proven in Unity Catalog, rather than inventing a parallel
+access model at the BI layer.
+
+**What forced this, found live.** Four of the seven gold views
+(`rpt_budget_variance`, `rpt_ai_cost_by_department`, and transitively anything
+built on `fact_gl_actual`/`fact_budget`/`fact_ai_usage`) inherit Phase 4's row
+filters, since gold views select straight from governed silver tables (D-029's
+own point: governance enforced once at silver, gold has nothing further to do).
+Queried directly as the account's own identity before it held any persona grant:
+`rpt_budget_variance` and `rpt_ai_cost_by_department` returned zero rows, while
+`rpt_headcount_trend`/`rpt_attrition_by_department` (built only from
+`dim_employee`/`dim_department`, masked but not row-filtered) returned complete
+data. An empty dashboard panel here would not have been a Power BI misconfiguration
+to debug — it would have been the governance layer correctly denying an
+unprovisioned identity, exactly as designed.
+
+**Alternatives considered.** (a) Leave the connecting identity ungrouped and treat
+the two empty views as a known limitation of the demo — rejected: it would make
+the exec dashboard's own headline numbers (budget variance, AI cost) silently
+wrong in a way indistinguishable from a real bug, undermining the actual point of
+building a dashboard at all. (b) Grant the connecting identity a bespoke
+"powerbi_service" capability set narrower than `grp_exec` — rejected as
+unnecessary complexity for what this project needs: the BI layer's own natural
+persona *is* the executive view (company-wide, aggregate, no masked-column
+capability required since none of the six dashboard measures touch a masked
+column), so reusing `grp_exec` is the right-sized grant, not an over-broad one
+taken for convenience.
+
+**Consequences.** This is the concrete case `docs/CUTOVER_PLAN.md` (D-028)
+anticipated in the abstract when it named "the BI semantic model" as Phase 5's
+first real consumer needing its own access provisioned before it can be treated
+as production-ready — now it actually is provisioned, and verified live (both
+previously empty views return real row counts after the grant took effect,
+respecting D-033's propagation delay rather than assuming it was instant). Power
+BI's own RLS roles are a second, independent enforcement layer on top of Unity
+Catalog's — a viewer assigned "Department Manager - Engineering" in Power BI
+Service would see Engineering-only rows even though the underlying DirectQuery
+connection itself has company-wide access, the same "row scope and column
+capability are independent, and here a third layer (BI-tool RLS on top of
+platform RLS) is independent too" shape D-029 already established one layer
+down.
