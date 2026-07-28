@@ -73,6 +73,25 @@ the comparison, not by reading the SQL — see `docs/DECISIONS.md` D-026/D-027.
 `docs/CUTOVER_PLAN.md` closes the phase: a phased-by-persona parallel-run plan with a
 recurring parity gate, written as if the reporting views had real consumers already.
 
+**Phase 4 complete: governance.** `lakehouse/sql/40_governance_schema.sql` /
+`41_governance_apply.sql` attach Unity Catalog row filters and column masks directly to
+the silver layer — inherited automatically by every gold view built on top, confirmed
+live even through a `GROUP BY`. Row-level scope and column-level capability are tracked
+as two independent axes (a department manager sees that a compensation record exists
+without seeing the amount), enforced for seven personas
+(`grp_exec`/`grp_hr_analyst`/`grp_total_rewards`/`grp_security`/`grp_fp_a`/
+`grp_sales_ops`/a narrow department-manager persona). Every RESTRICTED-tier column the
+generators declare is masked — checked against the classification directly, not
+restated by hand (`test_governance_coverage.py`). Verified end to end against the live
+workspace by toggling real Databricks group membership: default-deny with no group,
+department-scoped rows with masked values for a narrow persona, real values once a
+capability is also granted — see `docs/DECISIONS.md` D-029 through D-033 for three real
+platform constraints found only by running this live (a parameter-shadowing bug that
+silently permitted everything, a CHECK-constraint/row-filter conflict, and a
+group-membership propagation delay significant enough to change how an access review
+must be read). `docs/ACCESS_REVIEW.md` and `docs/CHANGE_CONTROL.md` are the SOX-style
+evidence this phase exists to produce.
+
 See `docs/BUILD_LOG.md` for the running narrative, `docs/DECISIONS.md` for design
 decisions with the alternatives considered, and `docs/data-catalog.md` (generated) for
 the full column-level classification.

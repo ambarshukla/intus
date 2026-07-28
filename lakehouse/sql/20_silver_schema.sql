@@ -156,11 +156,18 @@ CREATE TABLE IF NOT EXISTS intus.silver.dim_employee (
     termination_reason   STRING
 ) USING DELTA;
 
--- Row-level only (see file header) — this much Delta does enforce. DROP IF
--- EXISTS first, same rerun-safety reason as dq_exception's constraints above.
+-- No CHECK constraint on this table (Phase 4 reversal of Phase 3b's original
+-- choice) — confirmed live that Unity Catalog refuses to attach EITHER a row
+-- filter or a column mask to a table that has one at all
+-- (ROW_LEVEL_SECURITY_FEATURE_NOT_SUPPORTED.CHECK_CONSTRAINT /
+-- COLUMN_MASKS_FEATURE_NOT_SUPPORTED.CHECK_CONSTRAINT), and this table needs
+-- both (40_governance_schema.sql, 41_governance_apply.sql). DROP IF EXISTS
+-- with nothing re-adding it, so a rerun against an environment still carrying
+-- Phase 3b's constraint removes it rather than re-erroring. See D-031 for the
+-- full trade-off: the guarantee this constraint gave (valid_to > valid_from)
+-- moves entirely to the transform, the same posture D-024 already settled on
+-- for the harder no-overlap invariant on this same table.
 ALTER TABLE intus.silver.dim_employee DROP CONSTRAINT IF EXISTS ck_dim_employee_span;
-ALTER TABLE intus.silver.dim_employee
-    ADD CONSTRAINT ck_dim_employee_span CHECK (valid_to IS NULL OR valid_to > valid_from);
 
 COMMENT ON COLUMN intus.silver.dim_employee.is_current IS
     'Latest version of this employee. Terminated employees still have one.';

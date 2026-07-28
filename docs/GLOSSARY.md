@@ -117,6 +117,23 @@ Terms used in this project, expanded on first use in the docs and kept here.
 - **Point-in-time join** — resolving a type-2 dimension's surrogate key as of a specific
   date, rather than joining on the natural key alone (which would return every version).
   The standard way a fact table connects to an SCD2 dimension.
+- **SCIM (System for Cross-domain Identity Management)** — the standard API shape for
+  managing users and groups. Used here to create Databricks account/workspace groups and
+  toggle test membership without a browser, the same way Terraform or an HR system would
+  provision access in a real deployment.
+- **Default-deny** — a control's failure direction: a principal with no matching grant
+  sees nothing, rather than everything. `intus.governance.department_scope` is
+  deliberately built this way — a group with zero rows in it is locked out of every
+  department-scoped table, not implicitly trusted.
+- **Row filter (Unity Catalog)** — a SQL function attached to a table via
+  `ALTER TABLE ... SET ROW FILTER`, evaluated per row to decide whether the querying
+  principal may see it. The Databricks-native mechanism this project's row-level
+  security is built on, distinct from the generic RLS concept above in being an
+  engine-enforced table property rather than a view's `WHERE` clause.
+- **Capability grant** — in this project's governance design, a flag saying whether a
+  persona sees a masked column's real value, tracked independently of which *rows* that
+  persona can see (row scope). Two separate tables, two separate questions — see
+  `docs/DECISIONS.md` D-029.
 - **Unknown member** — a sentinel dimension row (here, surrogate key `-1`) that a fact's
   foreign key falls back to when it cannot resolve a real one, so downstream joins and
   aggregates never have to special-case a NULL foreign key.
