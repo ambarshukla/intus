@@ -2,7 +2,7 @@
 
 Newest first. One entry per merged change; what was built and what was learned.
 
-## 2026-07-28 — Phase 5 prep: the Power BI semantic model, DAX, and RLS roles, specified and live-checked
+## 2026-07-28 — Phase 5: the Power BI semantic model, DAX, RLS roles, and the exec dashboard, built and screenshotted
 
 Power BI Desktop's file format isn't something to hand-author blind, so this
 entry's artefact is `docs/POWERBI_MODEL.md` — connection details, DAX measures,
@@ -49,9 +49,40 @@ built: this project has no second real Power BI viewer to test it against, the
 same limitation `docs/ACCESS_REVIEW.md` already names for Unity Catalog's own
 groups, recurring one layer up.
 
-**Not done yet, by necessity**: the actual `.pbix` file, the dashboard's visual
-layout, and the two load-bearing screenshots (View As Executive vs. View As
-Department Manager - Engineering) need a person driving Power BI Desktop —
+**The manual half, done.** `powerbi/intus_exec_dashboard.pbix` — six KPI cards
+(one per measure), a budget-variance bar chart, a revenue-trend line chart, and
+an AI-cost table, connected DirectQuery to `intus.gold.*` per the spec above.
+Two small real things worth recording rather than glossing over. First: pasting
+multi-line DAX from this doc into Power BI Desktop's formula bar collapsed the
+line breaks without inserting a space, silently merging tokens (`=VAR`,
+`])RETURN`) into a syntax error — fixed by rewriting every measure as one line
+with explicit spaces, since Desktop's formula bar cannot be trusted to treat a
+pasted newline as whitespace. Second: Power BI's own RLS-role editor changed
+shape from what the spec assumed — Desktop now opens a "Manage security roles"
+dialog with a visual rule builder by table, and a **Switch to DAX editor**
+toggle exposes the plain-text filter box the spec's `[department_name] =
+"Engineering"` syntax was written for. Neither is a design problem; both are
+exactly the kind of thing that only surfaces by actually running the tool, the
+same discipline this project has applied to every Databricks dialect quirk so
+far, now applied to a desktop application instead of a SQL engine.
+
+**Live proof, screenshotted, not merely configured.** `docs/screenshots/
+powerbi_view_as_executive.png` and `powerbi_view_as_dept_manager_engineering
+.png` are Power BI Desktop's own **View As** feature — the BI-layer analogue of
+toggling Databricks group membership — applied to the same dashboard. Company-
+wide (`Executive`): headcount 69, AI cost $53.69, budget variance −$143.96K,
+attrition 8.40%. Filtered (`Department Manager - Engineering`): headcount 15,
+AI cost $18.76, budget variance $33.16K, attrition 15.38% — and revenue
+($16.05M ARR) and open pipeline ($26.98M) **unchanged** in both, exactly as
+designed, since neither of those two views carries a department dimension.
+Every filtered number matches its own visual's visible total exactly (the AI-
+cost table's own "Total" row reads 18.76 under the department-manager role and
+53.69 under Executive) — the same row-scope-restricts-something proof Phase
+4's Unity Catalog verification made, now reproduced one layer up, independently,
+in a completely different tool.
+
+This closes Phase 5. `docs/POWERBI_MODEL.md` remains the design record; this
+entry is what actually running it produced.
 flagged explicitly rather than claimed complete without them.
 
 ## 2026-07-26 — Phase 3d: the migration/cutover plan, and closing out Phase 3
