@@ -95,9 +95,9 @@ evidence this phase exists to produce.
 **Phase 5 complete: Power BI.** `powerbi/intus_exec_dashboard.pbix` — DirectQuery
 over `intus.gold.*`, six DAX measures, and two RLS roles (`Executive`, `Department
 Manager - Engineering`) mirroring the exact personas already proven live in Unity
-Catalog. Found live before building it: four of the seven gold views inherit
+Catalog. Found live before building it: two of the seven gold views inherit
 Phase 4's row filters, so the dashboard's own connecting identity needed a real
-persona grant (`grp_exec`) or two of its panels would show zero rows — not a bug,
+persona grant (`grp_exec`) or those two panels would show zero rows — not a bug,
 governance correctly denying an unprovisioned connection (D-034). Proven with
 Power BI Desktop's own **View As** feature — the BI-layer analogue of toggling
 Databricks group membership — screenshotted in `docs/screenshots/`: headcount,
