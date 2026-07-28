@@ -226,3 +226,11 @@ Terms used in this project, expanded on first use in the docs and kept here.
   both are built from the same landed extract: column names, row counts, and every cell
   (within a small numeric tolerance for floating-point rounding noise), independent of
   either view's own `ORDER BY`. See D-027.
+- **DirectQuery (Power BI)** — a Power BI connection mode that sends queries live to
+  the source on every interaction, rather than importing a cached copy. Chosen for
+  `docs/POWERBI_MODEL.md` specifically so the dashboard reflects Phase 4's governance
+  layer live, rather than an import that would go stale the moment a grant changes.
+- **View As Roles (Power BI)** — Power BI Desktop's built-in way to preview a report as
+  though a chosen RLS role were applied, without needing a second real viewer to test
+  against — the BI-layer equivalent of this project's own trick of toggling a single
+  account's Databricks group membership to prove Unity Catalog's row filters (D-029).

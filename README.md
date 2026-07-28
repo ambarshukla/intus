@@ -92,6 +92,16 @@ group-membership propagation delay significant enough to change how an access re
 must be read). `docs/ACCESS_REVIEW.md` and `docs/CHANGE_CONTROL.md` are the SOX-style
 evidence this phase exists to produce.
 
+**Phase 5 in progress: Power BI.** `docs/POWERBI_MODEL.md` specifies the semantic
+model — DirectQuery over `intus.gold.*`, DAX measures, and two RLS roles
+(`Executive`, `Department Manager - Engineering`) mirroring the exact personas
+already proven live in Unity Catalog. Found live before writing the spec: four of
+the seven gold views inherit Phase 4's row filters, so the dashboard's own
+connecting identity needed a real persona grant (`grp_exec`) or two of its panels
+would show zero rows — not a bug, governance correctly denying an unprovisioned
+connection (D-034). The `.pbix` file and dashboard screenshots (View As Executive
+vs. View As Department Manager) are the remaining, necessarily manual step.
+
 See `docs/BUILD_LOG.md` for the running narrative, `docs/DECISIONS.md` for design
 decisions with the alternatives considered, and `docs/data-catalog.md` (generated) for
 the full column-level classification.

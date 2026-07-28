@@ -2,6 +2,58 @@
 
 Newest first. One entry per merged change; what was built and what was learned.
 
+## 2026-07-28 — Phase 5 prep: the Power BI semantic model, DAX, and RLS roles, specified and live-checked
+
+Power BI Desktop's file format isn't something to hand-author blind, so this
+entry's artefact is `docs/POWERBI_MODEL.md` — connection details, DAX measures,
+and RLS role definitions as text a person executes in Desktop — plus the one
+piece of backend prep that needed to happen before any of it would work: the
+connecting identity itself needed a persona.
+
+**Found live, before writing a line of the spec**: four of the seven gold views
+(`rpt_budget_variance`, `rpt_ai_cost_by_department`, and anything else built on
+`fact_gl_actual`/`fact_budget`/`fact_ai_usage`) inherit Phase 4's row filters,
+since gold selects straight from governed silver tables. Queried as the
+account's own identity before it held any persona grant, both returned zero
+rows while the two views built only from `dim_employee`/`dim_department`
+(masked, not row-filtered) returned complete data. This is exactly the case
+Phase 3d's cutover plan (D-028) named in the abstract — "the BI semantic model
+is Phase 5's first real consumer needing its own access provisioned" — now
+concrete: an empty Power BI panel here would have looked like a broken
+dashboard, not correctly-functioning governance denying an unprovisioned
+connection. Fixed by adding the connecting account to `grp_exec` permanently
+(not a toggle test) — the natural persona for an exec dashboard's own
+DirectQuery connection anyway — and re-verified live: both previously-empty
+views now return real row counts. D-034.
+
+**DAX measures avoid a bug this project has already seen once, in a different
+tool.** `rpt_sales_pipeline_by_rep`'s `cumulative_pipeline_usd`/
+`total_open_pipeline_usd` columns are window-function outputs that repeat per
+row for a given rep (D-027's shape) — `SUM()`-ing either in a Power BI measure
+would multiply a rep's real total by their opportunity count, the same class of
+error as Phase 2d's 4883%-attrition bug (aggregating a value that already isn't
+one-row-per-entity), just surfacing in DAX instead of SQL. The pipeline measure
+sums `amount_usd` instead — one real value per opportunity. The attrition
+measure has the same discipline applied directly: a ratio of summed
+terminations over summed headcount, not an average of each department's own
+rate, for the identical reason Phase 2d's fix was.
+
+**RLS roles mirror the two personas already proven live in Unity Catalog**
+(`Executive`, `Department Manager - Engineering`) rather than inventing a
+parallel access model at the BI layer — filtered on exactly the four gold
+tables that carry a `department_name` column, matching Phase 4's own choice not
+to row-scope views with no department dimension. A third pattern —
+per-sales-rep dynamic RLS via `USERPRINCIPALNAME()`, the BI-layer analogue of
+Phase 4's `employee_department` mapping table (D-032) — is documented but not
+built: this project has no second real Power BI viewer to test it against, the
+same limitation `docs/ACCESS_REVIEW.md` already names for Unity Catalog's own
+groups, recurring one layer up.
+
+**Not done yet, by necessity**: the actual `.pbix` file, the dashboard's visual
+layout, and the two load-bearing screenshots (View As Executive vs. View As
+Department Manager - Engineering) need a person driving Power BI Desktop —
+flagged explicitly rather than claimed complete without them.
+
 ## 2026-07-26 — Phase 3d: the migration/cutover plan, and closing out Phase 3
 
 The last piece of the SQL→Databricks arc: `docs/CUTOVER_PLAN.md`, written as if
