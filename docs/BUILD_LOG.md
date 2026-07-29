@@ -10,10 +10,10 @@ and RLS role definitions as text a person executes in Desktop — plus the one
 piece of backend prep that needed to happen before any of it would work: the
 connecting identity itself needed a persona.
 
-**Found live, before writing a line of the spec**: four of the seven gold views
-(`rpt_budget_variance`, `rpt_ai_cost_by_department`, and anything else built on
-`fact_gl_actual`/`fact_budget`/`fact_ai_usage`) inherit Phase 4's row filters,
-since gold selects straight from governed silver tables. Queried as the
+**Found live, before writing a line of the spec**: two of the seven gold views
+(`rpt_budget_variance`, built on `fact_gl_actual`/`fact_budget`, and
+`rpt_ai_cost_by_department`, built on `fact_ai_usage`) inherit Phase 4's row
+filters, since gold selects straight from governed silver tables. Queried as the
 account's own identity before it held any persona grant, both returned zero
 rows while the two views built only from `dim_employee`/`dim_department`
 (masked, not row-filtered) returned complete data. This is exactly the case

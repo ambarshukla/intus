@@ -847,9 +847,9 @@ in D-029's live verification were. Row-level security inside Power BI itself
 personas already proven in Unity Catalog, rather than inventing a parallel
 access model at the BI layer.
 
-**What forced this, found live.** Four of the seven gold views
-(`rpt_budget_variance`, `rpt_ai_cost_by_department`, and transitively anything
-built on `fact_gl_actual`/`fact_budget`/`fact_ai_usage`) inherit Phase 4's row
+**What forced this, found live.** Two of the seven gold views —
+`rpt_budget_variance` (built on `fact_gl_actual` and `fact_budget`) and
+`rpt_ai_cost_by_department` (built on `fact_ai_usage`) — inherit Phase 4's row
 filters, since gold views select straight from governed silver tables (D-029's
 own point: governance enforced once at silver, gold has nothing further to do).
 Queried directly as the account's own identity before it held any persona grant:

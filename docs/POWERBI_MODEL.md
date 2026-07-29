@@ -14,10 +14,11 @@ Import) — the whole point of Phase 4's governance layer is that it enforces li
 and an imported snapshot would go stale the moment `department_scope`/
 `capability_grant` changes without anyone re-importing.
 
-That has a real consequence, checked live before writing this doc: **four of the
-seven gold views inherit Phase 4's row filters**, because they're built on
-`fact_gl_actual`, `fact_budget`, or `fact_ai_usage` — tables Phase 4 attached a
-department-scoped row filter to. Confirmed by direct query as the account's own
+That has a real consequence, checked live before writing this doc: **two of the
+seven gold views inherit Phase 4's row filters** — `rpt_budget_variance` (built on
+`fact_gl_actual`/`fact_budget`) and `rpt_ai_cost_by_department` (built on
+`fact_ai_usage`) — tables Phase 4 attached a department-scoped row filter to.
+Confirmed by direct query as the account's own
 identity, ungrouped: `rpt_budget_variance` and `rpt_ai_cost_by_department` returned
 **zero rows**, while `rpt_headcount_trend` and `rpt_attrition_by_department`
 (built only from `dim_employee`/`dim_department`, which carry masks but no row
