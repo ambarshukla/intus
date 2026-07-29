@@ -41,6 +41,90 @@ All phases are complete. `docs/BUILD_LOG.md` has the running narrative,
 `docs/DECISIONS.md` the design decisions with alternatives considered, and
 `docs/data-catalog.md` (generated) the full column-level classification.
 
+## The star schema
+
+Five dimensions, ten facts. The same table and column names exist on both platforms —
+`warehouse.*` in Postgres, `intus.silver.*` in Unity Catalog — so a query written
+against one runs on the other with the schema name swapped.
+
+```mermaid
+erDiagram
+    dim_date       ||--o{ fact_compensation : date_key
+    dim_employee   ||--o{ fact_compensation : employee_key
+    dim_date       ||--o{ fact_performance_review : date_key
+    dim_employee   ||--o{ fact_performance_review : "employee_key, reviewer_employee_key"
+    dim_date       ||--o{ fact_subscription : "start_date_key, end_date_key"
+    dim_account    ||--o{ fact_subscription : account_key
+    dim_product    ||--o{ fact_subscription : product_key
+    dim_date       ||--o{ fact_invoice : "issue_date_key, due_date_key, paid_date_key"
+    dim_account    ||--o{ fact_invoice : account_key
+    dim_date       ||--o{ fact_opportunity : "created_date_key, close_date_key"
+    dim_account    ||--o{ fact_opportunity : account_key
+    dim_employee   ||--o{ fact_opportunity : owner_employee_key
+    dim_product    ||--o{ fact_opportunity : product_key
+    dim_date       ||--o{ fact_usage_daily : date_key
+    dim_account    ||--o{ fact_usage_daily : account_key
+    dim_product    ||--o{ fact_usage_daily : product_key
+    dim_date       ||--o{ fact_ai_usage : date_key
+    dim_employee   ||--o{ fact_ai_usage : employee_key
+    dim_department ||--o{ fact_ai_usage : department_key
+    dim_date       ||--o{ fact_access_event : date_key
+    dim_employee   ||--o{ fact_access_event : employee_key
+    dim_department ||--o{ fact_access_event : department_key
+    dim_date       ||--o{ fact_gl_actual : date_key
+    dim_employee   ||--o{ fact_gl_actual : posted_by_employee_key
+    dim_department ||--o{ fact_gl_actual : department_key
+    dim_date       ||--o{ fact_budget : approved_date_key
+    dim_employee   ||--o{ fact_budget : approved_by_employee_key
+    dim_department ||--o{ fact_budget : department_key
+```
+
+### Dimensions
+
+| Dimension | Key | Natural key | Notes |
+|---|---|---|---|
+| `dim_date` | `date_key` = `YYYYMMDD` | `full_date` | Calendar *and* fiscal attributes (`fiscal_period`, `fiscal_quarter`, `fiscal_year`), so finance facts don't re-derive them |
+| `dim_department` | `department_key` | `department_code` | Conformed: code and name from HR, `cost_center` from finance |
+| `dim_employee` | `employee_key` | `(employee_id, valid_from)` | **Type 2** — one row per version, `valid_to` exclusive and NULL when open. `is_current` means latest version, *not* still employed |
+| `dim_account` | `account_key` | `account_id` | Type 1: the CRM extract carries only current state |
+| `dim_product` | `product_key` | `product_code` | Type 1, tiny |
+
+### Facts
+
+| Fact | Grain — one row per… | Dimension keys | Measures |
+|---|---|---|---|
+| `fact_compensation` | compensation change | `employee_key`, `date_key` | `annual_salary_usd`, `bonus_target_pct`, `equity_units` |
+| `fact_performance_review` | review | `employee_key`, `reviewer_employee_key`, `date_key` | `rating`, `promotion_recommended` |
+| `fact_subscription` | subscription | `account_key`, `product_key`, `start_date_key`, `end_date_key` | `seats`, `arr_usd` |
+| `fact_invoice` | invoice | `account_key`, `issue_date_key`, `due_date_key`, `paid_date_key` | `amount_usd` (plus `status`) |
+| `fact_opportunity` | opportunity | `account_key`, `owner_employee_key`, `product_key`, `created_date_key`, `close_date_key` | `amount_usd`, `probability_pct`, `is_won` |
+| `fact_usage_daily` | date × account × product | `date_key`, `account_key`, `product_key` | `active_users`, `sessions`, `api_calls`, `storage_gb`, `avg_latency_ms`, `error_count` |
+| `fact_ai_usage` | LLM request | `employee_key`, `department_key`, `date_key` | `prompt_tokens`, `completion_tokens`, `cost_usd`, `latency_ms` |
+| `fact_access_event` | login / access event | `employee_key`, `department_key`, `date_key` | count-only, plus `result` and `mfa_used` |
+| `fact_gl_actual` | posted GL line | `department_key`, `posted_by_employee_key`, `date_key` | `amount_usd` |
+| `fact_budget` | department × period × GL account | `department_key`, `approved_by_employee_key`, `approved_date_key` | `budget_usd` |
+
+`fact_invoice.subscription_id` and the finance facts' `fiscal_period` are *degenerate*
+dimensions — business keys held on the fact rather than a table of their own.
+`fact_usage_daily` has no surrogate primary key: its grain is already its natural key.
+
+### Four things that will bite you
+
+- **`dim_employee` is type 2, so it has more rows than employees.** Any metric over it
+  needs `COUNT(DISTINCT employee_id)` — counting rows counts SCD spans. Doing this
+  wrong here once produced a 4883% attrition rate.
+- **Every dimension has an `UNKNOWN` member at key `-1`**, used when a fact's foreign
+  key doesn't resolve. It keeps joins inner rather than outer, but you have to exclude
+  it explicitly (`WHERE employee_key <> -1`) when reasoning about real rows.
+- **Joining a fact to `dim_employee` on `employee_key` gives you the version in force
+  at the time of the event**, not the person's current state. For "as they are now",
+  join back through `employee_id` with `is_current`.
+- **Two key-lookup functions, and the difference matters.**
+  `employee_key_as_of(employee_id, date)` is strict and returns NULL when no version
+  covers the date; `employee_key_best(...)` falls back to the nearest known version.
+  Every fact *stores* the `best` key; the `as_of` NULL is what data-quality rules are
+  built on — the post-termination-login rule is literally "`as_of` returned NULL".
+
 ## Running it
 
 Requires [uv](https://docs.astral.sh/uv/), Python 3.12, and Docker for the warehouse.
