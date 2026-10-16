@@ -5,6 +5,12 @@ fictional mid-size B2B software company: synthetic data → a legacy Postgres st
 → a Databricks lakehouse → governance → a BI dashboard. Everything is deterministic,
 tested and documented, so each layer can be checked against the one below it.
 
+> **Independent personal project.** Built entirely from public sources and
+> synthetic data, on personal time and equipment. It contains no confidential,
+> proprietary or employer information, and is not affiliated with, endorsed by, or
+> derived from the work of any employer, client, data vendor or exchange. Halcyon is
+> fictional and every row of its data is generated.
+
 ## The pieces
 
 **`gen/` — synthetic data.** Twelve datasets across six domains (HR, sales and revenue,
